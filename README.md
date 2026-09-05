@@ -23,8 +23,10 @@ php bin/console app:seed          # sample tasks/tools for local testing
 php -S 127.0.0.1:8000 -t public   # or use FrankenPHP / symfony server
 ```
 
-Configuration is env-driven (see `.env` / `.env.example`). `symfony/dotenv` is
-dev-only; production uses real environment variables.
+Configuration is env-driven. Committed defaults: `.env.dev` (dev) and
+`.env.example` (production-ready template — copy and fill in). `.env` is never
+committed; create your own local `.env` / `.env.dev.local` for overrides.
+Production injects real environment variables; there is no dotenv file there.
 
 ## Reference worker
 
@@ -45,6 +47,10 @@ The worker provisions (Tier-0), claims tasks (Tier-1), runs its own LLM loop
 against the local model, and forwards external tool calls to TaskWeaver with an
 event-scoped key (Tier-2). It **abandons a step on any 401/403 denial** — no
 retry, no result report.
+
+The default descriptor requests the `dev-worker` image variant so the worker
+is provisioned with the tags (`terminal`, `echo`, `weather`) needed to claim
+the seeded sample tasks out of the box.
 
 ## Worker API (controller side)
 

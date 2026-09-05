@@ -1,5 +1,8 @@
 
 ###> symfony/framework-bundle ###
+# .env is never committed — dev defaults live in .env.dev (tracked),
+# local machine-specific overrides in .env.local (ignored).
+/.env
 /.env.local
 /.env.local.php
 /.env.*.local

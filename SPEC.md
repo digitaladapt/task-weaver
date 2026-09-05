@@ -72,8 +72,8 @@ What a step's context intentionally excludes:
 
 All tunable settings — timeouts (including the step timeout), context limits, LLM endpoint, and so on — come from **environment variables**. There is no config file and nothing tunable lives in the database.
 
-- **Development:** `symfony/dotenv` is a **dev dependency** (loaded in dev only), reading a local `.env` / `.env.local`.
-- **Production:** real environment variables, injected by the runtime (container secrets, orchestration). No dotenv file, no `.env` shipped.
+- **Development:** `symfony/dotenv` (a dev dependency) loads committed defaults from `.env.dev` plus any machine-local `.env.local` / `.env.dev.local` overrides. `.env` is **never committed**.
+- **Production:** real environment variables injected by the runtime (container secrets, orchestration). No dotenv file; `.env.example` is the committed production-ready reference template.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|

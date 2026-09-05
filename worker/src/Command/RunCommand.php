@@ -50,7 +50,11 @@ final class RunCommand extends Command
         $client = new ControllerClient((string) $controller, (string) $token);
         $llm = new LlmClient((string) $llmUrl, (string) $llmModel);
 
-        $provisioned = $client->provision($name, ['image' => 'taskweaver/worker:latest']);
+        // Default descriptor uses the `dev-worker` variant so the controller
+        // provisions this worker with the tags needed to claim the seeded
+        // sample tasks (echo, weather). Swap the image for the variant you
+        // actually run (e.g. taskweaver/worker:latest -> terminal only).
+        $provisioned = $client->provision($name, ['image' => 'taskweaver/dev-worker:latest']);
         $output->writeln(sprintf('Provisioned worker %s (tags: %s)', $provisioned['worker_id'] ?? '?', implode(',', $provisioned['tags'] ?? [])));
 
         do {
