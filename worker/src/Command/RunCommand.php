@@ -48,7 +48,6 @@ final class RunCommand extends Command
 
         // --- Boot / provision ---
         $client = new ControllerClient((string) $controller, (string) $token);
-        $llm = new LlmClient((string) $llmUrl, (string) $llmModel);
 
         // Default descriptor uses the `dev-worker` variant so the controller
         // provisions this worker with the tags needed to claim the seeded
@@ -56,6 +55,23 @@ final class RunCommand extends Command
         // actually run (e.g. taskweaver/worker:latest -> terminal only).
         $provisioned = $client->provision($name, ['image' => 'taskweaver/dev-worker:latest']);
         $output->writeln(sprintf('Provisioned worker %s (tags: %s)', $provisioned['worker_id'] ?? '?', implode(',', $provisioned['tags'] ?? [])));
+
+        // The controller is the source of truth for the LLM endpoint
+        // (WORKER.md provision -> config.llm_url). Prefer the controller's
+        // issued value unless the operator explicitly pointed this worker at a
+        // different LLM via --llm-url (CLI) or TASKWEAVER_LLM_URL (env) — a
+        // local-debug escape hatch.
+        $config = is_array($provisioned['config'] ?? null) ? $provisioned['config'] : [];
+        $operatorOverride = $input->hasParameterOption('--llm-url', true)
+            || (($envUrl = getenv('TASKWEAVER_LLM_URL')) !== false && $envUrl !== '');
+        if (!$operatorOverride) {
+            $issuedUrl = is_string($config['llm_url'] ?? null) ? $config['llm_url'] : '';
+            if ($issuedUrl !== '') {
+                $llmUrl = $issuedUrl;
+            }
+        }
+        $llm = new LlmClient((string) $llmUrl, (string) $llmModel);
+        $output->writeln(sprintf('LLM endpoint: %s (model: %s)', $llmUrl, $llmModel));
 
         do {
             try {
