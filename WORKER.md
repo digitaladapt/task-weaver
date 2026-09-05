@@ -252,7 +252,7 @@ can't leave anyway).
                       Enrollment token injected at spawn (env/secret).
 2. Provision          POST /api/worker/provision  (Bearer: enrollment token)
                       → ephemeral Worker API key + noted tools + config
-                        (LLM endpoint, timeouts, context budget,
+                        (LLM endpoint + model, timeouts, context budget,
                          llm_max_concurrency, system-prompt override)
 3. Claim              POST /api/worker/claim  (Bearer: worker key)
                       Server-assigned capability match only.
@@ -389,7 +389,8 @@ durable history is TaskWeaver's event + ToolCall records.
   "tags": ["terminal"],
   "internal_tools": ["memory.search", "memory.store"],
   "config": {
-    "llm_url": "http://llm:11434/v1",
+    "llm_url": "http://llm:11434/v1",      // TASKWEAVER_LLM_URL, controller env var
+    "llm_model": "llama3.1",               // TASKWEAVER_LLM_MODEL, controller env var
     "system_prompt_override": null,
     "step_timeout": 600   // TASKWEAVER_STEP_TIMEOUT, controller env var
     "context": { "request_size": 6000, "output_buffer_size": 1500 },

@@ -70,6 +70,19 @@ final class RunCommand extends Command
                 $llmUrl = $issuedUrl;
             }
         }
+
+        // Same flow for the model: prefer the controller's issued value unless
+        // the operator explicitly overrode it via --llm-model (CLI) or
+        // TASKWEAVER_LLM_MODEL (env).
+        if (!$input->hasParameterOption('--llm-model', true)) {
+            $envModel = getenv('TASKWEAVER_LLM_MODEL');
+            if ($envModel === false || $envModel === '') {
+                $issuedModel = is_string($config['llm_model'] ?? null) ? $config['llm_model'] : '';
+                if ($issuedModel !== '') {
+                    $llmModel = $issuedModel;
+                }
+            }
+        }
         $llm = new LlmClient((string) $llmUrl, (string) $llmModel);
         $output->writeln(sprintf('LLM endpoint: %s (model: %s)', $llmUrl, $llmModel));
 

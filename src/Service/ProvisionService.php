@@ -61,6 +61,7 @@ final class ProvisionService
         $worker->setApiKey(KeyGenerator::generate());
         $worker->setConfig([
             'llm_url' => getenv('TASKWEAVER_LLM_URL') ?: 'http://llm:11434/v1',
+            'llm_model' => getenv('TASKWEAVER_LLM_MODEL') ?: 'llama3.1',
             'system_prompt_override' => getenv('TASKWEAVER_SYSTEM_PROMPT_OVERRIDE') ?: null,
             'step_timeout' => $this->stepTimeout,
             'context' => [

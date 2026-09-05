@@ -13,6 +13,7 @@ parameters:
     env(TASKWEAVER_LLM_MAX_CONCURRENCY): '1'
     env(TASKWEAVER_ENROLLMENT_TOKEN): 'dev-enrollment-token'
     env(TASKWEAVER_LLM_URL): 'http://llm:11434/v1'
+    env(TASKWEAVER_LLM_MODEL): 'llama3.1'
 
 services:
     # default configuration for services in *this* file
