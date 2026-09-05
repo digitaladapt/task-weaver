@@ -1,0 +1,16 @@
+framework:
+    messenger:
+        # Failed messages are kept for later inspection via
+        # `bin/console messenger:failed:show`.
+        failure_transport: failed
+
+        transports:
+            # The scheduler + dispatch flow uses the Doctrine transport backed
+            # by the same SQLite DB (auto_setup in .env).
+            async: '%env(MESSENGER_TRANSPORT_DSN)%'
+            failed: 'doctrine://default?queue_name=failed'
+
+        routing:
+            # Messages for the task scheduler.
+            'App\Message\SchedulerTick': async
+            'App\Message\TaskDueMessage': async

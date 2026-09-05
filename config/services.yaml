@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=../vendor/symfony/dependency-injection/Loader/schema/services.schema.json
+
+# This file is the entry point to configure your own services.
+# Files in the packages/ subdirectory configure your dependencies.
+# See also https://symfony.com/doc/current/service_container/import.html
+
+parameters:
+    # TaskWeaver tunables — all from environment variables (SPEC.md → Configuration).
+    # symfony/dotenv is dev-only; production injects real env vars.
+    env(TASKWEAVER_STEP_TIMEOUT): '600'
+    env(TASKWEAVER_CONTEXT_REQUEST_SIZE): '6000'
+    env(TASKWEAVER_CONTEXT_OUTPUT_BUFFER): '1500'
+    env(TASKWEAVER_LLM_MAX_CONCURRENCY): '1'
+    env(TASKWEAVER_ENROLLMENT_TOKEN): 'dev-enrollment-token'
+    env(TASKWEAVER_LLM_URL): 'http://llm:11434/v1'
+
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        autowire: true      # Automatically injects dependencies in your services.
+        autoconfigure: true # Automatically registers your services as commands, event subscribers, etc.
+
+    # makes classes in src/ available to be used as services
+    # this creates a service per class whose id is the fully-qualified class name
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/DependencyInjection/'
+            - '../src/Entity/'
+            - '../src/Kernel.php'
+
+    # MCP clients are tagged so the registry receives them all.
+    App\MCP\HttpMcpClient:
+        tags: ['app.mcp_client']
+    App\MCP\OpenApiMcpClient:
+        tags: ['app.mcp_client']
+
+    App\MCP\McpClientRegistry:
+        arguments:
+            $clients: !tagged_iterator app.mcp_client
+
+    # Controller-issued worker config values.
+    App\Service\ProvisionService:
+        arguments:
+            $enrollmentToken: '%env(TASKWEAVER_ENROLLMENT_TOKEN)%'
+            $stepTimeout: '%env(int:TASKWEAVER_STEP_TIMEOUT)%'
+            $contextRequestSize: '%env(int:TASKWEAVER_CONTEXT_REQUEST_SIZE)%'
+            $contextOutputBuffer: '%env(int:TASKWEAVER_CONTEXT_OUTPUT_BUFFER)%'
+            $llmMaxConcurrency: '%env(int:TASKWEAVER_LLM_MAX_CONCURRENCY)%'
+
+    # Step timeout for the workflow service.
+    App\Service\TaskWorkflowService:
+        arguments:
+            $stepTimeout: '%env(int:TASKWEAVER_STEP_TIMEOUT)%'
