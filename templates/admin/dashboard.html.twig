@@ -1,0 +1,120 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Dashboard · TaskWeaver{% endblock %}
+
+{% block body %}
+    <h1>Dashboard</h1>
+    <p class="subtitle">Overview of the TaskWeaver controller.</p>
+
+    <div class="cards">
+        <div class="card"><a href="{{ path('app_tasks') }}"><span class="num">{{ totals.tasks }}</span><span class="label">Tasks</span></a></div>
+        <div class="card"><a href="{{ path('app_workers') }}"><span class="num">{{ totals.workers }}</span><span class="label">Workers</span></a></div>
+        <div class="card"><a href="{{ path('app_tools') }}"><span class="num">{{ totals.servers }}</span><span class="label">MCP Servers</span></a></div>
+        <div class="card"><a href="{{ path('app_tools') }}"><span class="num">{{ totals.tools }}</span><span class="label">Tools</span></a></div>
+        <div class="card"><span class="num">{{ totals.events }}</span><span class="label">Events</span></div>
+    </div>
+
+    {% if statuses is not empty %}
+    <div class="panel">
+        <h3>Tasks by status</h3>
+        <table>
+            <thead><tr><th>Status</th><th>Count</th></tr></thead>
+            <tbody>
+            {% for status, n in statuses %}
+                <tr>
+                    <td><span class="badge status-{{ status }}">{{ status }}</span></td>
+                    <td>{{ n }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <div class="grid-2">
+        <div class="panel">
+            <h3>Recent tasks</h3>
+            {% if recent_tasks is empty %}
+                <div class="empty">No tasks yet.</div>
+            {% else %}
+            <table>
+                <thead><tr><th>Task</th><th>Status</th><th>Created</th></tr></thead>
+                <tbody>
+                {% for task in recent_tasks %}
+                    <tr>
+                        <td><a href="{{ path('app_task_show', {id: task.id}) }}">{{ task.name }}</a></td>
+                        <td><span class="badge status-{{ task.status }}">{{ task.status }}</span></td>
+                        <td class="muted">{{ task.createdAt|date('Y-m-d H:i') }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+
+        <div class="panel">
+            <h3>Recent activity</h3>
+            {% if recent_events is empty %}
+                <div class="empty">No events yet.</div>
+            {% else %}
+            <ul class="timeline">
+                {% for event in recent_events %}
+                    <li class="type-{{ event.type }}">
+                        <span class="t">{{ event.timestamp|date('H:i:s') }}</span>
+                        <span class="badge">{{ event.type }}</span>
+                        <div class="ev-meta">
+                            {% if event.task %}
+                                on <a href="{{ path('app_task_show', {id: event.task.id}) }}">{{ event.task.name }}</a>
+                            {% endif %}
+                            {% if event.worker %} · {{ event.worker.name }}{% endif %}
+                        </div>
+                    </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid-2">
+        <div class="panel">
+            <h3>Workers</h3>
+            {% if recent_workers is empty %}
+                <div class="empty">No workers registered.</div>
+            {% else %}
+            <table>
+                <thead><tr><th>Name</th><th>Tags</th><th>Last seen</th></tr></thead>
+                <tbody>
+                {% for worker in recent_workers %}
+                    <tr>
+                        <td>{{ worker.name }}</td>
+                        <td>{% for tag in worker.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</td>
+                        <td class="muted">{{ worker.lastSeenAt ? worker.lastSeenAt|date('Y-m-d H:i') : '—' }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+
+        <div class="panel">
+            <h3>MCP servers</h3>
+            {% if recent_servers is empty %}
+                <div class="empty">No MCP servers configured.</div>
+            {% else %}
+            <table>
+                <thead><tr><th>Name</th><th>Transport</th><th>Endpoint</th><th>Enabled</th></tr></thead>
+                <tbody>
+                {% for server in recent_servers %}
+                    <tr>
+                        <td>{{ server.name }}</td>
+                        <td class="mono">{{ server.transport }}</td>
+                        <td class="mono muted">{{ server.endpoint }}</td>
+                        <td>{% if server.enabled %}<span class="badge bg-green">on</span>{% else %}<span class="badge bg-red">off</span>{% endif %}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

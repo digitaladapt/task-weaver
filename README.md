@@ -16,17 +16,41 @@ the worker-facing contract.
 
 ## Quick start (controller)
 
+The one-liner for local development is the self-bootstrapping dev script
+(installs PHP deps/extensions on a fresh box, uses a **separate** dev SQLite
+DB under `var/data/dev.db` so the real DB is never touched):
+
 ```bash
-composer install
-php bin/console doctrine:migrations:migrate
-php bin/console app:seed          # sample tasks/tools for local testing
-php -S 127.0.0.1:8000 -t public   # or use FrankenPHP / symfony server
+bin/dev.sh start --seed    # start on port 8987 and seed sample data
+bin/dev.sh status          # check it's running
+bin/dev.sh stop            # stop it
 ```
+
+The dev server binds to `0.0.0.0:8987` (dial-pad mnemonic **W-V-R = 9-8-7** for
+weaver). It is exposed via the reverse proxy at `weaver.lyra-dev.devgnome.com`.
+
+To run manually: `composer install`, then
+`php bin/console doctrine:migrations:migrate`, `php bin/console app:seed`,
+and `php -S 0.0.0.0:8987 -t public`.
 
 Configuration is env-driven. Committed defaults: `.env.dev` (dev) and
 `.env.example` (production-ready template — copy and fill in). `.env` is never
 committed; create your own local `.env` / `.env.dev.local` for overrides.
-Production injects real environment variables; there is no dotenv file there.
+`bin/dev.sh start` auto-writes the git-ignored `.env.dev.local` to point at the
+separate dev DB. Production injects real environment variables; there is no
+dotenv file there.
+
+## Admin UI
+
+The controller ships a small read-only web admin (Twig) for visual verification:
+
+- `/` — dashboard (counts, statuses, recent tasks/events/workers/servers)
+- `/tasks` and `/tasks/{id}` — task list and detail (steps, tags, event timeline)
+- `/tools` — MCP servers and their tool definitions
+- `/workers` — registered worker containers and their tags
+
+Routes are plain `app_*` HTML routes; the worker-facing API lives under
+`/api/worker/*`.
 
 ## Reference worker
 

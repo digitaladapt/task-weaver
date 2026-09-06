@@ -1,0 +1,82 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ task.name }} · TaskWeaver{% endblock %}
+
+{% block body %}
+    <p><a href="{{ path('app_tasks') }}">← All tasks</a></p>
+    <h1>{{ task.name }}</h1>
+    <p class="subtitle">
+        <span class="badge status-{{ task.status }}">{{ task.status }}</span>
+        <span class="muted">created {{ task.createdAt|date('Y-m-d H:i') }}</span>
+        {% if task.priority %}<span class="badge">priority {{ task.priority }}</span>{% endif %}
+        {% if task.schedule %}<span class="badge mono">{{ task.schedule }}</span>{% endif %}
+    </p>
+
+    <div class="panel">
+        <h3>Description</h3>
+        <p>{{ task.description }}</p>
+    </div>
+
+    <div class="grid-2">
+        <div class="panel">
+            <h3>Steps ({{ task.steps|length }})</h3>
+            {% for step in task.steps %}
+                <div class="step-box {{ step.isFinal ? 'final' : '' }}">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                        <strong>{{ step.name }}</strong>
+                        <span class="badge status-{{ step.status }}">{{ step.status }}</span>
+                    </div>
+                    <div class="muted" style="margin-top:4px;">{{ step.description }}</div>
+                    <div style="margin-top:6px;">
+                        {% for tag in step.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
+                        {% if step.isFinal %}<span class="badge bg-accent">final</span>{% endif %}
+                    </div>
+                    <div class="muted" style="margin-top:4px; font-size:12px;">
+                        {% if step.startedAt %}started {{ step.startedAt|date('Y-m-d H:i') }}{% endif %}
+                        {% if step.finishedAt %} · finished {{ step.finishedAt|date('Y-m-d H:i') }}{% endif %}
+                        {% if step.expiresAt %} · expires {{ step.expiresAt|date('Y-m-d H:i') }}{% endif %}
+                    </div>
+                    {% if step.result %}
+                        <details style="margin-top:6px;">
+                            <summary class="muted" style="cursor:pointer;">result</summary>
+                            <pre class="mono" style="background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px;">{{ step.result|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
+                        </details>
+                    {% endif %}
+                </div>
+            {% else %}
+                <div class="empty">No steps for this task.</div>
+            {% endfor %}
+        </div>
+
+        <div class="panel">
+            <h3>Event timeline ({{ task.events|length }})</h3>
+            {% if task.events is empty %}
+                <div class="empty">No events logged for this task yet.</div>
+            {% else %}
+            <ul class="timeline">
+                {% for event in task.events|sort((a, b) => a.timestamp <=> b.timestamp) %}
+                    <li class="type-{{ event.type }}">
+                        <span class="t">{{ event.timestamp|date('Y-m-d H:i:s') }}</span>
+                        <span class="badge type-{{ event.type }}">{{ event.type }}</span>
+                        {% if event.worker %}<span class="muted" style="font-size:12px;">· {{ event.worker.name }}</span>{% endif %}
+                        {% if event.step %}<span class="muted" style="font-size:12px;">· {{ event.step.name }}</span>{% endif %}
+                        {% if event.payload is not empty %}
+                            <details>
+                                <summary class="muted" style="cursor:pointer;">payload</summary>
+                                <pre class="mono" style="background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px;">{{ event.payload|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
+                            </details>
+                        {% endif %}
+                        {% if event.toolCalls|length > 0 %}
+                            <div class="ev-meta">
+                                {% for tc in event.toolCalls %}
+                                    <span class="tag">{{ tc.toolName }}</span>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}
