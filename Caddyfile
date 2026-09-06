@@ -1,4 +1,0 @@
-# --- taskweaver ---	---	---	---	---	---
-weaver.lyra-dev.devgnome.com {
-	reverse_proxy taskweaver
-}
