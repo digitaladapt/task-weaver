@@ -23,9 +23,33 @@ final class CredentialResolver
         $resolved = [];
 
         foreach ($server->getCredVars() as $var) {
-            $resolved[$var] = getenv($var) ?: null;
+            $resolved[$var] = $this->resolveVar($var);
         }
 
         return $resolved;
+    }
+
+    /**
+     * Resolve a single credential variable from the environment.
+     *
+     * Checks the process environment (getenv) so real exported vars work, and
+     * falls back to $_ENV/$_SERVER so values loaded from a .env file by
+     * symfony/dotenv (which does not call putenv() by default) are honored
+     * too. The credential names are dynamic (stored per McpServer in the DB),
+     * so they cannot be declared as container env() parameters.
+     */
+    private function resolveVar(string $var): ?string
+    {
+        $value = getenv($var);
+
+        if (false === $value || '' === $value) {
+            $value = $_ENV[$var] ?? $_SERVER[$var] ?? null;
+        }
+
+        if (!\is_string($value) || '' === $value) {
+            return null;
+        }
+
+        return $value;
     }
 }

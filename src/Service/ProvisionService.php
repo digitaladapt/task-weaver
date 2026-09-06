@@ -28,6 +28,9 @@ final class ProvisionService
         private readonly int $contextRequestSize,
         private readonly int $contextOutputBuffer,
         private readonly int $llmMaxConcurrency,
+        private readonly string $llmUrl = 'http://llm:11434/v1',
+        private readonly string $llmModel = 'llama3.1',
+        private readonly ?string $systemPromptOverride = null,
     ) {
     }
 
@@ -60,9 +63,9 @@ final class ProvisionService
 
         $worker->setApiKey(KeyGenerator::generate());
         $worker->setConfig([
-            'llm_url' => getenv('TASKWEAVER_LLM_URL') ?: 'http://llm:11434/v1',
-            'llm_model' => getenv('TASKWEAVER_LLM_MODEL') ?: 'llama3.1',
-            'system_prompt_override' => getenv('TASKWEAVER_SYSTEM_PROMPT_OVERRIDE') ?: null,
+            'llm_url' => $this->llmUrl,
+            'llm_model' => $this->llmModel,
+            'system_prompt_override' => $this->systemPromptOverride,
             'step_timeout' => $this->stepTimeout,
             'context' => [
                 'request_size' => $this->contextRequestSize,

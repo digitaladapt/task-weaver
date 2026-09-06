@@ -75,11 +75,17 @@ All tunable settings — timeouts (including the step timeout), context limits, 
 - **Development:** `symfony/dotenv` (a dev dependency) loads committed defaults from `.env.dev` plus any machine-local `.env.local` / `.env.dev.local` overrides. `.env` is **never committed**.
 - **Production:** real environment variables injected by the runtime (container secrets, orchestration). No dotenv file; `.env.example` is the committed production-ready reference template.
 
+> **Reading mechanism:** the controller reads every `TASKWEAVER_*` variable through the Symfony **container's `%env(...)%`** mechanism (declared in `config/services.yaml`), so values are honored whether they come from a dotenv file (dev) or real exported environment variables (prod). `symfony/dotenv` does **not** call `putenv()` by default, so a raw `getenv()` call in application code would *not* see dotenv-loaded values — do not introduce new `getenv()` reads for controller tunables. (MCP credential values are the exception: their names are dynamic per server, so `CredentialResolver` checks both `getenv()` and `$_ENV`/`$_SERVER`.)
+
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `TASKWEAVER_STEP_TIMEOUT` | `600` | Seconds a step may stay `running` before it's considered expired. Used to set `Step.expires_at` when the step is marked running; enforced **lazily** — see Stale Step Expiry. |
 | `TASKWEAVER_CONTEXT_REQUEST_SIZE` / `TASKWEAVER_CONTEXT_OUTPUT_BUFFER` | `6000` / `1500` | Step context budget (`max-context = request-size + output-buffer-size`). |
 | `TASKWEAVER_LLM_MAX_CONCURRENCY` | `1` | Worker's LLM-call concurrency limit, issued to the worker in its config. |
+| `TASKWEAVER_LLM_URL` | `http://llm:11434/v1` | Base URL of the local (private-network) LLM the workers talk to directly. Issued to workers via the provision `config` (`llm_url`). |
+| `TASKWEAVER_LLM_MODEL` | `llama3.1` | Default LLM model issued to workers via the provision `config` (`llm_model`). |
+| `TASKWEAVER_ENROLLMENT_TOKEN` | `dev-enrollment-token` | One-time token workers present at provision time (Tier-0). |
+| `TASKWEAVER_SYSTEM_PROMPT_OVERRIDE` | *(none)* | Optional system-prompt override issued to workers via provision `config` (`system_prompt_override`). |
 
 ## Architecture
 
