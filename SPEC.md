@@ -72,14 +72,42 @@ What a step's context intentionally excludes:
 
 All tunable settings — timeouts (including the step timeout), context limits, LLM endpoint, and so on — come from **environment variables**. There is no config file and nothing tunable lives in the database.
 
-- **Development:** `symfony/dotenv` is a **dev dependency** (loaded in dev only), reading a local `.env` / `.env.local`.
-- **Production:** real environment variables, injected by the runtime (container secrets, orchestration). No dotenv file, no `.env` shipped.
+- **Development:** `symfony/dotenv` (a dev dependency) loads committed defaults from `.env.dev` plus any machine-local `.env.local` / `.env.dev.local` overrides. `.env` is **never committed**.
+- **Production:** real environment variables injected by the runtime (container secrets, orchestration). No dotenv file; `.env.example` is the committed production-ready reference template.
+
+> **Reading mechanism:** the controller reads every `TASKWEAVER_*` variable through the Symfony **container's `%env(...)%`** mechanism (declared in `config/services.yaml`), so values are honored whether they come from a dotenv file (dev) or real exported environment variables (prod). `symfony/dotenv` does **not** call `putenv()` by default, so a raw `getenv()` call in application code would *not* see dotenv-loaded values — do not introduce new `getenv()` reads for controller tunables. (MCP credential values are the exception: their names are dynamic per server, so `CredentialResolver` checks both `getenv()` and `$_ENV`/`$_SERVER`.)
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `TASKWEAVER_STEP_TIMEOUT` | `600` | Seconds a step may stay `running` before it's considered expired. Used to set `Step.expires_at` when the step is marked running; enforced **lazily** — see Stale Step Expiry. |
 | `TASKWEAVER_CONTEXT_REQUEST_SIZE` / `TASKWEAVER_CONTEXT_OUTPUT_BUFFER` | `6000` / `1500` | Step context budget (`max-context = request-size + output-buffer-size`). |
 | `TASKWEAVER_LLM_MAX_CONCURRENCY` | `1` | Worker's LLM-call concurrency limit, issued to the worker in its config. |
+| `TASKWEAVER_LLM_URL` | `http://llm:11434/v1` | Base URL of the LLM. For an **unauthenticated** local endpoint the worker talks to it directly (private Docker network). For an endpoint that needs an API key (external provider or keyed LAN proxy) this is the upstream the **controller** proxies to — the worker instead gets the controller's `/api/worker/llm` URL. Issued via provision `config` (`llm_url`). |
+| `TASKWEAVER_LLM_MODEL` | `llama3.1` | Default LLM model issued to workers via the provision `config` (`llm_model`). |
+| `TASKWEAVER_LLM_API_KEY` | *(none)* | API key for the LLM provider (e.g. OpenAI/Anthropic key). Held **only by the controller** (read at request time, never persisted, never issued to workers). When set, the worker's LLM traffic is proxied through TaskWeaver. |
+| `TASKWEAVER_ENROLLMENT_TOKEN` | `dev-enrollment-token` | One-time token workers present at provision time (Tier-0). |
+| `TASKWEAVER_SYSTEM_PROMPT_OVERRIDE` | *(none)* | Optional system-prompt override issued to workers via provision `config` (`system_prompt_override`). |
+
+### LLM channel: direct vs. proxied
+
+The worker's LLM channel is **controller-directed** — the worker never decides how to reach the model, and never holds a provider secret.
+
+- **Unauthenticated local LLM (default):** provision `config` carries `llm_url` (the private endpoint) and `llm_auth: null`. The worker talks to it **directly** over the private Docker network, exactly as today. Model traffic never touches TaskWeaver.
+- **Authenticated / external LLM:** provision `config` carries `llm_url` = the controller's `{origin}/api/worker/llm` endpoint and `llm_auth: { "type": "proxy", "provider": "openai" }` (or `"anthropic"` / `"generic"`). The worker sends its OpenAI-compatible chat completions to TaskWeaver's proxy route with its **worker key** as the bearer token. TaskWeaver validates the key, resolves the provider key from its own environment (`TASKWEAVER_LLM_API_KEY`, or a per-server `cred_var`), injects it into the upstream request, forwards to `TASKWEAVER_LLM_URL`, and relays the response back.
+- **Decision is server-side:** whether a worker gets `llm_auth: null` or `llm_auth.type = "proxy"` is decided by the controller at provision time based on whether a provider key is configured. The worker is a dumb pipe either way.
+- **Threat model preserved:** the worker never sees the provider key, never needs internet egress, and can't exfiltrate credentials. The controller remains the only component with secrets and egress.
+
+**Proxy mechanics (v1):**
+
+- `POST /api/worker/llm` — body is the OpenAI-compatible chat/completions payload; `Authorization: Bearer <worker_key>`. TaskWeaver validates the key, then forwards to `TASKWEAVER_LLM_URL/chat/completions` with the provider key attached (`Authorization: Bearer <TASKWEAVER_LLM_API_KEY>` for OpenAI-style, or the provider's expected header) and relays the JSON response.
+- **Non-streaming only in v1.** Streaming (SSE) is a v2 follow-up; the worker's `LlmClient` already posts non-streaming payloads, so v1 is a straight JSON relay.
+- **Request/response scrubbing** applies to the LLM proxy too: provider keys and any echoed auth material are stripped from logged traces (same rule as MCP proxy, §Tool Calls — Scrubbing).
+- **Event/worker key expiry** applies: the same `401/403 → abandon-on-denial` rule that governs tool calls covers the LLM proxy route automatically.
+- **No circular dependency:** the LLM proxy is orthogonal to step execution. The controller can proxy for a worker even while its step is mid-flight; both channels are authenticated by the same worker/event key.
+
+Security model: the API key moves from "one per local network" to "one per provider, held centrally". The controller is the single place that holds credentials (already true for MCP servers); the LLM proxy extends that same trust boundary to model access. Provider keys are read at request time via `CredentialResolver` semantics (env → `$_ENV`/`$_SERVER`), never stored in the DB, never returned to the worker.
+
+**v2 direction (model types — not in v1 scope):** v1 exposes a single controller-wide provider/model. The planned direction is named **model types** (e.g. `fast`, `coder`, `abliterated`), each mapping to a concrete provider + model + params, with selection controllable at the **task** and **step** levels (a default type per task, overridable per step, resolved server-side at provision/fetch time). This is deliberately deferred; it layers cleanly on the proxy channel without changing the worker contract (the worker still just receives a resolved endpoint + model in its config).
 
 ## Architecture
 
@@ -99,7 +127,8 @@ All tunable settings — timeouts (including the step timeout), context limits, 
 ```
 
 - **Worker sandbox** (Docker, PHP 8.4 + Symfony) holds only its own *internal* tools (memory, reasoning helpers, etc.). Base image always has `terminal`; variants layer on extra tags like `php`, `node`. The worker talks to the local LLM directly over the private Docker network; it shares that network with the controller, which also has a second NIC exposing only the web admin UI.
-- **Zero egress by default.** Workers have no internet access — no network egress at all, except the tightly-scoped HTTPS channel back to TaskWeaver. To get anything from outside (a package, a library, remote data), the worker must request it *through TaskWeaver* as a proxied tool call, exactly like any other tool. Egress is never opened per-worker.
+- **Zero egress by default.** Workers have no internet access — no network egress at all, except the tightly-scoped HTTPS channel back to TaskWeaver. To get anything from outside (a package, a library, remote data, or an **external LLM that needs an API key**), the worker must request it *through TaskWeaver* — as a proxied tool call, or via the proxied LLM channel (§ Configuration → LLM channel). Egress is never opened per-worker.
+- **The LLM is reachable two ways, both controller-decided.** Unauthenticated local models: worker talks direct over the private network. Keyed/external models: worker talks to TaskWeaver's `/api/worker/llm` proxy, which holds the provider key. **Only the controller ever holds an LLM API key.**
 - **TaskWeaver tool proxy** holds all external tool definitions (MCP servers), their env-var credentials, and the tag-based rules for who may call what.
 - Anything a worker needs from the outside world must go through TaskWeaver's `/api/worker/tool` endpoint.
 
@@ -396,6 +425,7 @@ When the worker marks a step `running`, the controller stamps `expires_at = now 
 - MCP server secrets live in **environment variables** on the TaskWeaver host/container.
 - `McpServer.cred_vars` records *which* env var names map to the server's auth (headers/tokens), never the values.
 - At call time, TaskWeaver reads the env var, injects it into the outbound MCP request, and returns only the tool result to the worker.
+- **LLM provider keys** (e.g. `TASKWEAVER_LLM_API_KEY`) follow the same rule: held only by the controller, read at request time, injected into the outbound LLM request, never persisted and never issued to workers (see § LLM channel).
 - DB-backed credential storage is deferred to v2.
 
 ### Secret containment
@@ -466,3 +496,12 @@ The step editor enforces the two valid shapes (single step, or all-parallel + on
 | 14 | Config source | **Environment variables** everywhere. `symfony/dotenv` is a **dev-only dependency**; production uses real env vars. |
 | 15 | Stale step expiry | **Lazy (option 1):** `Step.expires_at = now + step-timeout` at running; the selection query handles expiry (`queued OR running AND expires_at < now`); event keys gated by the same deadline. Periodic sweeper (option 2) deferred to next version. |
 | 16 | Worker on denial | A worker that gets a **401/403** on this step (tool call, status, or `complete`) **abandons the step immediately** — no retry, no LLM loop, no result report; it drops local state and moves to the next claim. Denial = the step's fate is already decided server-side. |
+| 17 | LLM auth / external LLMs | **Controller-mediated proxy.** When a provider key is configured, the worker's LLM traffic is proxied through TaskWeaver's `/api/worker/llm`; the worker never holds the key and never needs egress. Unauthenticated local LLMs stay direct. v1 is non-streaming (SSE in v2). |
+| 18 | LLM model selection | v1 = **one controller-wide provider/model**. Named **model types** (`fast`/`coder`/`abliterated`/…) selectable at task/step level is a **v2** direction (see § LLM channel). |
+
+## v2 Roadmap (intent, not scope)
+
+- **LLM model types** — named types (`fast`, `coder`, `abliterated`, …) → concrete provider/model/params; selectable at task and step level; resolved server-side. Deferred so v1 stays a single, clean provider channel.
+- **Streaming LLM proxy** (SSE) through `/api/worker/llm`.
+- DB-backed credential storage replacing v1's env-var-only approach.
+- Periodic stale-step sweeper (vs. v1's lazy expiry).

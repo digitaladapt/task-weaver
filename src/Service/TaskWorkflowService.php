@@ -1,0 +1,208 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Service;
+
+use App\Entity\Event;
+use App\Entity\Step;
+use App\Entity\Task;
+use App\Entity\Worker;
+
+use function count;
+
+use DateTimeImmutable;
+use Doctrine\ORM\EntityManagerInterface;
+
+use function in_array;
+
+use LogicException;
+use Psr\Log\LoggerInterface;
+
+use function sprintf;
+
+/**
+ * Central orchestration for task/step lifecycle on the controller:
+ *   - marking steps running (stamps expires_at)
+ *   - completing steps (revokes event keys, resolves the flow shape)
+ *   - failing steps / lazy expiry of stale-running steps
+ */
+final class TaskWorkflowService
+{
+    public function __construct(
+        private readonly EntityManagerInterface $em,
+        private readonly LoggerInterface $logger,
+        private readonly int $stepTimeout = 600,
+    ) {
+    }
+
+    /**
+     * @return array<string, mixed>|null the persisted step key (or null when generated here)
+     */
+    public function markStepRunning(Step $step, Worker $worker): void
+    {
+        if (Step::STATUS_PENDING !== $step->getStatus()) {
+            // Only a pending step may transition to running. A stale-running
+            // step must first be failed (see expireStaleSteps).
+            throw new LogicException(sprintf('Step %s cannot start: status is %s, expected pending.', $step->getId()->toRfc4122(), $step->getStatus()));
+        }
+
+        $step->setStatus(Step::STATUS_RUNNING);
+        $step->setStartedAt(new DateTimeImmutable());
+        $step->setExpiresAt((new DateTimeImmutable())->modify(sprintf('+%d seconds', $this->stepTimeout)));
+
+        $this->em->persist($step);
+        $this->em->flush();
+
+        $this->log(Event::TYPE_STEP_STARTED, $step, $worker, ['expires_at' => $step->getExpiresAt()?->format('c')]);
+        $this->logger->info('Step started', ['step' => $step->getId()->toRfc4122()]);
+    }
+
+    /**
+     * Register an event for a step. Returns the event entity with a fresh
+     * event-scoped API key.
+     */
+    public function registerEvent(Step $step, Worker $worker): Event
+    {
+        if (Step::STATUS_RUNNING !== $step->getStatus()) {
+            throw new LogicException(sprintf('Cannot register event for step %s: status is %s, expected running.', $step->getId()->toRfc4122(), $step->getStatus()));
+        }
+
+        $event = new Event($step, $step->getTask(), $worker, Event::TYPE_LLM_CALL);
+        $event->setApiKey(KeyGenerator::generate());
+        $this->em->persist($event);
+        $this->em->flush();
+
+        return $event;
+    }
+
+    /**
+     * Submit a step's result. Revokes every event key for the step and marks
+     * it completed, then resolves the task shape:
+     *   - when this was a non-final step of a multi-step task, makes the
+     *     final step claimable if all siblings are done (task → ready);
+     *   - when this was the final step, marks the task completed.
+     */
+    public function completeStep(Step $step, Worker $worker, array $result): void
+    {
+        if (Step::STATUS_RUNNING !== $step->getStatus()) {
+            throw new LogicException(sprintf('Cannot complete step %s: status is %s, expected running.', $step->getId()->toRfc4122(), $step->getStatus()));
+        }
+
+        // Revoke every event key for this step (success or failure).
+        $this->em->getRepository(Event::class)->revokeKeysForStep($step->getId()->toRfc4122());
+
+        $step->setResult($result);
+        $step->setStatus(Step::STATUS_COMPLETED);
+        $step->setFinishedAt(new DateTimeImmutable());
+        $this->em->persist($step);
+
+        $this->log(Event::TYPE_STEP_COMPLETED, $step, $worker, ['result' => $result]);
+
+        $task = $step->getTask();
+
+        if ($step->isFinal()) {
+            $task->setStatus(Task::STATUS_COMPLETED);
+            $task->setNextRunAt(null);
+            $task->touch();
+            $this->em->persist($task);
+            $this->logger->info('Task completed', ['task' => $task->getId()->toRfc4122()]);
+        } else {
+            // Non-final step done: if every non-final sibling is finished,
+            // the final step becomes eligible (task → ready for claim).
+            $this->resolveNonFinalCompletion($task);
+        }
+
+        $this->em->flush();
+    }
+
+    /**
+     * After a non-final step completes, check whether all its siblings are
+     * done — if so, transition the task so the final step becomes claimable.
+     */
+    private function resolveNonFinalCompletion(Task $task): void
+    {
+        $nonFinal = $task->getSteps()->filter(static fn (Step $s) => !$s->isFinal());
+        $allDone = $nonFinal->count() > 0
+            && $nonFinal->forAll(static fn (int $_, Step $s) => Step::STATUS_COMPLETED === $s->getStatus());
+
+        if ($allDone) {
+            $task->setStatus(Task::STATUS_READY);
+            $task->touch();
+            $this->em->persist($task);
+            $this->logger->info('All non-final steps done; final step eligible', ['task' => $task->getId()->toRfc4122()]);
+        }
+    }
+
+    /**
+     * Fail a step (worker-reported failure or lazy expiry).
+     * Event keys are revoked here too. Shape resolution proceeds like a failure.
+     */
+    public function failStep(Step $step, Worker $worker, string $reason, string $eventType = Event::TYPE_STEP_FAILED): void
+    {
+        if (!in_array($step->getStatus(), [Step::STATUS_RUNNING, Step::STATUS_PENDING], true)) {
+            throw new LogicException(sprintf('Cannot fail step %s: status is %s.', $step->getId()->toRfc4122(), $step->getStatus()));
+        }
+
+        $this->em->getRepository(Event::class)->revokeKeysForStep($step->getId()->toRfc4122());
+
+        $step->setStatus(Step::STATUS_FAILED);
+        $step->setFinishedAt(new DateTimeImmutable());
+        $step->setResult(null);
+        $this->em->persist($step);
+
+        $this->log($eventType, $step, $worker, ['reason' => $reason]);
+
+        $task = $step->getTask();
+
+        if ($step->isFinal()) {
+            $task->setStatus(Task::STATUS_FAILED);
+            $task->touch();
+            $this->em->persist($task);
+        } else {
+            // A non-final step failing still unblocks the final step (failure
+            // data flows forward). So we resolve the shape like a completion.
+            $this->resolveNonFinalCompletion($task);
+        }
+
+        $this->em->flush();
+        $this->logger->info('Step failed', ['step' => $step->getId()->toRfc4122(), 'reason' => $reason]);
+    }
+
+    /**
+     * Lazy expiry: mark every stale `running` step (expires_at < now) as
+     * failed with a worker-timeout reason. Called on the way to doing other
+     * work (e.g. from the scheduler / claim path).
+     */
+    public function expireStaleSteps(): void
+    {
+        $now = new DateTimeImmutable();
+        $stale = $this->em->getRepository(Step::class)->findStaleRunning($now);
+
+        foreach ($stale as $step) {
+            $worker = $step->getEvents()->isEmpty()
+                ? null
+                : $step->getEvents()->last()->getWorker();
+
+            if ($worker instanceof Worker) {
+                $this->failStep($step, $worker, 'worker timeout: step expired at '.$step->getExpiresAt()?->format('c'));
+            } else {
+                // No worker recorded — just mark failed and log an error event via a synthetic path.
+                $step->setStatus(Step::STATUS_FAILED);
+                $step->setFinishedAt(new DateTimeImmutable());
+                $this->em->persist($step);
+            }
+        }
+
+        if (count($stale) > 0) {
+            $this->em->flush();
+        }
+    }
+
+    private function log(string $type, Step $step, Worker $worker, array $payload = []): void
+    {
+        $event = new Event($step, $step->getTask(), $worker, $type);
+        $event->setPayload($payload);
+        $this->em->persist($event);
+    }
+}

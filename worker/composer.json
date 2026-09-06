@@ -1,0 +1,31 @@
+{
+    "name": "taskweaver/worker",
+    "description": "TaskWeaver reference worker — sandboxed LLM runner (v1: external tools only, no internal terminal tools)",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.4",
+        "ext-json": "*",
+        "symfony/http-client": "^7.2",
+        "symfony/console": "^7.2"
+    },
+    "require-dev": {
+        "symfony/dotenv": "^7.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "TaskWeaverWorker\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "TaskWeaverWorker\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "start": "@php bin/worker"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
