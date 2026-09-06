@@ -1,0 +1,93 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ server.name }} · Tools · TaskWeaver{% endblock %}
+
+{% block body %}
+    <div class="page-head">
+        <a href="{{ path('app_tools') }}" class="btn btn-ghost">All servers</a>
+        <h1>{{ server.name }}</h1>
+        <span class="spacer"></span>
+        <a class="btn" href="{{ path('app_tool_server_edit', {id: server.id}) }}">Edit</a>
+        <a class="btn btn-primary" href="{{ path('app_tool_server_sync', {id: server.id}) }}" onclick="return confirm('Re-sync tool definitions from the server?\\n\\nExisting tools keep their manual tags; new tools are created; tools that vanished are flagged removed.');">Sync Now</a>
+    </div>
+
+    <div class="panel">
+        <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+            <div>
+                <span class="badge mono">{{ server.transport }}</span>
+                {% if server.enabled %}<span class="badge bg-green">enabled</span>{% else %}<span class="badge bg-red">disabled</span>{% endif %}
+            </div>
+            <div class="mono muted">{{ server.endpoint }}</div>
+            {% if server.credVars is not empty %}
+                <div>
+                    <span class="muted" style="font-size:12px;">creds:</span>
+                    {% for v in server.credVars %}<span class="tag">{{ v }}</span>{% endfor %}
+                </div>
+            {% endif %}
+        </div>
+        {% if server.description %}
+            <p style="margin:10px 0 0; color:var(--muted);">{{ server.description }}</p>
+        {% endif %}
+    </div>
+
+    <form method="post" action="{{ path('app_tool_server_save_tags', {id: server.id}) }}">
+        <div class="panel">
+            <div class="panel-head">
+                <h3>Tool Definitions</h3>
+                <span class="muted" style="font-size:12px;">Tags are manual — seed once from the spec, preserved on re-sync. Untagged tools are disabled.</span>
+            </div>
+            <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Tags</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for tool in server.toolDefs %}
+                    <tr class="{{ tool.removed ? 'row-removed' : '' }}">
+                        <td>
+                            <div class="mono">{{ tool.name }}</div>
+                        </td>
+                        <td style="min-width:220px;">
+                            <input type="text" class="input mono" name="tool_tags[{{ tool.id }}]" value="{{ tool.tags|join(', ') }}" placeholder="tag1, tag2" {{ tool.removed ? 'disabled' : '' }}>
+                        </td>
+                        <td class="muted">{{ tool.description ?: '—' }}</td>
+                        <td>
+                            {% if tool.removed %}
+                                <span class="badge bg-yellow" title="No longer defined on the server">removed</span>
+                            {% else %}
+                                <span class="badge bg-green" title="Defined on the server">live</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="4"><div class="empty">No tool definitions yet. Sync to pull them from the server.</div></td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% if server.toolDefs|length > 0 %}
+                <div style="margin-top:12px; text-align:right;">
+                    <button type="submit" class="btn btn-small">Save Tags</button>
+                </div>
+            {% endif %}
+        </div>
+    </form>
+
+    <div class="delete-zone" style="margin-top:8px; padding-top:20px; border-top:1px solid var(--border); text-align:center;">
+        <form method="post" action="{{ path('app_tool_server_delete', {id: server.id}) }}" class="inline" onsubmit="return confirm('Delete this MCP server and ALL its tool definitions?\\n\\nThis cannot be undone.');">
+            <button type="submit" class="btn btn-danger">Delete Server</button>
+        </form>
+    </div>
+{% endblock %}
+
+{% block stylesheets %}
+    <style>
+        .row-removed td { opacity: .55; }
+        .row-removed td { background: rgba(210,153,34,.04); }
+    </style>
+{% endblock %}

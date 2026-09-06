@@ -3,50 +3,51 @@
 {% block title %}Tools · TaskWeaver{% endblock %}
 
 {% block body %}
-    <h1>Tools</h1>
+    <div class="page-head">
+        <h1>Tools</h1>
+        <span class="spacer"></span>
+        <a class="btn btn-primary" href="{{ path('app_tool_server_new') }}">New Server</a>
+    </div>
     <p class="subtitle">MCP servers and their tool definitions. Tools are tag-gated per step.</p>
 
     {% if servers is empty %}
         <div class="panel"><div class="empty">No MCP servers configured yet.</div></div>
-    {% endif %}
-
-    {% for server in servers %}
+    {% else %}
         <div class="panel">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0;">{{ server.name }}</h3>
-                <div style="display:flex; gap:8px; align-items:center;">
-                    <span class="badge mono">{{ server.transport }}</span>
-                    {% if server.enabled %}<span class="badge bg-green">enabled</span>{% else %}<span class="badge bg-red">disabled</span>{% endif %}
-                </div>
-            </div>
-            <div class="mono muted" style="margin:6px 0 12px;">{{ server.endpoint }}</div>
-            {% if server.credVars is not empty %}
-                <div style="margin-bottom:8px;">
-                    <span class="muted" style="font-size:12px;">creds:</span>
-                    {% for v in server.credVars %}<span class="tag">{{ v }}</span>{% endfor %}
-                </div>
-            {% endif %}
-
-            {% if server.toolDefs|length == 0 %}
-                <div class="empty">No tool definitions on this server.</div>
-            {% else %}
             <div class="table-scroll">
             <table>
-                <thead><tr><th>Name</th><th>Description</th></tr></thead>
-                <tbody>
-                {% for tool in server.toolDefs %}
+                <thead>
                     <tr>
+                        <th>Name</th>
+                        <th>Transport</th>
+                        <th>Endpoint</th>
+                        <th>Tools</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for server in servers %}
+                    {% set live = server.toolDefs|filter(t => not t.removed)|length %}
+                    {% set removed = server.toolDefs|length - live %}
+                    <tr>
+                        <td><a href="{{ path('app_tool_server_show', {id: server.id}) }}">{{ server.name }}</a></td>
+                        <td><span class="badge mono">{{ server.transport }}</span></td>
+                        <td class="mono muted">{{ server.endpoint }}</td>
                         <td>
-                            <div class="mono">{{ tool.name }}</div>
-                            <div class="tool-tags">{% for tag in tool.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>
+                            {{ live }} live
+                            {% if removed > 0 %}<span class="badge bg-yellow">{{ removed }} removed</span>{% endif %}
                         </td>
-                        <td class="muted">{{ tool.description ?: '—' }}</td>
+                        <td>{% if server.enabled %}<span class="badge bg-green">enabled</span>{% else %}<span class="badge bg-red">disabled</span>{% endif %}</td>
+                        <td>
+                            <a class="btn btn-small" href="{{ path('app_tool_server_show', {id: server.id}) }}">Manage</a>
+                            <a class="btn btn-small" href="{{ path('app_tool_server_edit', {id: server.id}) }}">Edit</a>
+                        </td>
                     </tr>
                 {% endfor %}
                 </tbody>
             </table>
             </div>
-            {% endif %}
         </div>
-    {% endfor %}
+    {% endif %}
 {% endblock %}

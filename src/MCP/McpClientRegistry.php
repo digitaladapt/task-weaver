@@ -6,6 +6,7 @@ namespace App\MCP;
 
 use App\Entity\McpServer;
 use App\Entity\ToolDef;
+use RuntimeException;
 
 use function sprintf;
 
@@ -40,5 +41,23 @@ final class McpClientRegistry
             $server->getTransport(),
             $server->getName(),
         ));
+    }
+
+    /**
+     * Discover the tools a server currently exposes.
+     *
+     * @return DiscoveredTool[]
+     */
+    public function listTools(McpServer $server): array
+    {
+        foreach ($this->clients as $client) {
+            if ($client->supports($server)) {
+                $env = $this->credentials->resolve($server);
+
+                return $client->listTools($server, $env);
+            }
+        }
+
+        throw new RuntimeException(sprintf('No MCP client supports transport "%s" for server "%s"', $server->getTransport(), $server->getName()));
     }
 }

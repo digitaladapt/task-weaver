@@ -245,18 +245,31 @@ The event API key is created server-side when the worker registers an event. The
 | `id` | UUID | Primary key |
 | `name` | string(255) | |
 | `transport` | enum | `openapi` \| `http` (streamable HTTP MCP). **No SSE, no stdio.** |
-| `base_url` | string | Endpoint |
+| `endpoint` | string | Base URL (OpenAPI) or `/mcp` streamable endpoint (HTTP MCP) |
+| `description` | text/null | Optional admin note |
 | `cred_vars` | JSON array | Names of environment variables holding secrets (never the values themselves) |
-| `enabled` | boolean | |
+| `enabled` | boolean | Disabled servers' tools are not offered to steps |
 
 #### `ToolDef`
 | Field | Type | Notes |
 |-------|------|-------|
 | `id` | UUID | Primary key |
 | `server_id` | FK → McpServer | |
-| `name` | string(255) | e.g. `weather.get` |
-| `tags` | JSON array | Tags used to authorize/route (weather, calendar, notification…) |
+| `name` | string(255) | e.g. `weather.get` (unique per server) |
+| `tags` | JSON array | Tags used to authorize/route (weather, calendar, notification…). **Manual** — seeded once from the spec on first sync, preserved on re-sync. |
 | `schema` | JSON | OpenAPI / tool input schema for the worker (so the LLM knows the args) |
+| `description` | text/null | Tool description (refreshed on sync) |
+| `removed_at` | datetime/null | Set when the tool disappears from the server on re-sync. A removed tool is flagged (not deleted) so tags/history survive; it is no longer offered to steps or callable. Re-appearing on a later sync clears the flag. |
+
+## Tool Management (external tools)
+
+MCP servers and their tool definitions are managed from the admin UI (`/tools`). TaskWeaver discovers a server's current tool surface and reconciles its ToolDef rows on create/update/sync:
+
+- **Discovery** — OpenAPI servers are read from `{endpoint}/openapi.json`; each operation becomes a tool (name = `operationId`, tags = OpenAPI `tags`, schema = params + requestBody). HTTP streamable MCP servers use JSON-RPC `tools/list` (inputSchema; MCP has no native tags).
+- **Create** — every tool is created as a ToolDef; tags are seeded from the server's own spec (OpenAPI operation tags).
+- **Update / re-sync** — existing ToolDefs get their schema/description refreshed, but **tags are never overwritten**: they are manual. New tools are created (with spec tags); tools that vanished from the server are **flagged removed** (`removed_at`), not deleted. A tool that reappears is restored.
+- **Tag gating** — a tool with no tags is effectively disabled (no step can match it). Removed tools and tools on disabled servers are likewise invisible to steps and rejected at call time.
+- `ToolSyncService` performs the reconciliation; `OpenApiToolParser` + `HttpMcpClient::listTools` implement discovery per transport.
 
 ## Tool Wrangling via Tags
 
@@ -463,7 +476,7 @@ This keeps the "no internet in the sandbox" property intact while still giving w
 | `/tasks/{id}` | Overview; step graph (all non-final steps parallel → final step); typed event timeline per step; tool call listing; **Edit** button top right across from "All tasks" |
 | `/tasks/new` | Task form: name/description/schedule; step editor with tags per step and a "final step" toggle |
 | `/tasks/{id}/edit` | Same form, pre-filled |
-| `/tools` | MCP servers + ToolDefs management (endpoint, transport, cred-vars, tags), health check |
+| `/tools` | MCP servers + ToolDefs management: server list with live/removed tool counts; create/edit server (name, transport, endpoint, description, cred-vars, enabled); per-server tool table with inline tag editing, live/removed badges, and **Sync now**; delete server |
 | `/workers` | Registered workers, tags, internal tools, last seen, connection status |
 
 The step editor enforces the two valid shapes (single step, or all-parallel + one final) so invalid configurations can't be saved.

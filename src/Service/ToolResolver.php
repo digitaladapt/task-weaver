@@ -38,6 +38,12 @@ final class ToolResolver
         $toolDefs = $this->em->getRepository(ToolDef::class)->findAll();
 
         foreach ($toolDefs as $tool) {
+            // Removed tools (no longer defined on their server) and tools on
+            // disabled servers are not offered; their tags are preserved for
+            // history but they must never reach steps.
+            if ($tool->isRemoved() || !$tool->getServer()->isEnabled()) {
+                continue;
+            }
             if ($tool->matchesTags($stepTags)) {
                 $schemas[] = [
                     'name' => $tool->getName(),
@@ -62,6 +68,11 @@ final class ToolResolver
 
         if (null === $tool) {
             throw new ToolNotAllowedException(sprintf('Unknown tool "%s"', $toolName));
+        }
+
+        // Removed tools can never be called, regardless of tags.
+        if ($tool->isRemoved()) {
+            throw new ToolNotAllowedException(sprintf('Tool "%s" is no longer defined on its server', $toolName));
         }
 
         if (!$tool->matchesTags($step->getTags())) {

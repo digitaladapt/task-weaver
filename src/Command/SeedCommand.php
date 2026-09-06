@@ -57,6 +57,7 @@ final class SeedCommand extends Command
         // --- Sample MCP server + tool defs ---
         $server = new McpServer('dev-echo', McpServer::TRANSPORT_OPENAPI, 'https://api.example.com');
         $server->setCredVars([]);
+        $server->setDescription('Local echo/weather/status fixture for dev smoke tests.');
         $this->em->persist($server);
 
         $echoTool = new ToolDef('echo.echo', ['echo']);

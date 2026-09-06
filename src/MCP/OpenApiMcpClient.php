@@ -53,6 +53,41 @@ final class OpenApiMcpClient implements McpClientInterface
         return McpServer::TRANSPORT_OPENAPI === $server->getTransport();
     }
 
+    public function listTools(McpServer $server, array $env): array
+    {
+        $headers = $this->buildHeaders($server, $env);
+
+        $url = rtrim($server->getEndpoint(), '/').'/openapi.json';
+        $options = ['timeout' => 30];
+        if ([] !== $headers) {
+            $options['headers'] = $headers;
+        }
+
+        try {
+            $response = $this->httpClient->request('GET', $url, $options);
+            $status = $response->getStatusCode();
+            $content = $response->getContent(false);
+
+            if ($status >= 400) {
+                throw new RuntimeException(sprintf('OpenAPI server responded %d: %s', $status, $this->scrub($content)));
+            }
+
+            $spec = json_decode($content, true);
+            if (!is_array($spec)) {
+                throw new RuntimeException('openapi.json is not valid JSON');
+            }
+
+            return (new OpenApiToolParser())->parse($spec);
+        } catch (Throwable $e) {
+            $this->logger->error('OpenAPI discovery failed', [
+                'server' => $server->getName(),
+                'url' => $url,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
     public function call(McpServer $server, ToolDef $toolDef, array $arguments, array $env): ToolResult
     {
         $schema = $toolDef->getSchema();

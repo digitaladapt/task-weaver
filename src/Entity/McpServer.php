@@ -41,6 +41,9 @@ class McpServer
     #[ORM\Column(type: Types::STRING, length: 2048)]
     private string $endpoint;
 
+    #[ORM\Column(type: Types::TEXT, nullable: true)]
+    private ?string $description = null;
+
     /**
      * Which env-var names map to this server's auth (headers/tokens).
      * Names only — values live in the environment, never the DB.
@@ -106,6 +109,16 @@ class McpServer
     public function getEndpoint(): string
     {
         return $this->endpoint;
+    }
+
+    public function getDescription(): ?string
+    {
+        return $this->description;
+    }
+
+    public function setDescription(?string $description): void
+    {
+        $this->description = $description;
     }
 
     public function setEndpoint(string $endpoint): void

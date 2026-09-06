@@ -1,0 +1,157 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ is_new ? 'New server' : 'Edit server' }} · Tools · TaskWeaver{% endblock %}
+
+{% block body %}
+    <form method="post" action="{% if is_new %}{{ path('app_tool_server_new') }}{% else %}{{ path('app_tool_server_edit', {id: server.id}) }}{% endif %}" class="server-form">
+        <div class="form-head">
+            {% if is_new %}
+                <a href="{{ path('app_tools') }}" class="btn btn-ghost">Cancel</a>
+            {% else %}
+                <a href="{{ path('app_tool_server_show', {id: server.id}) }}" class="btn btn-ghost">Cancel</a>
+            {% endif %}
+            <h1>{{ is_new ? 'New MCP server' : 'Edit MCP server' }}</h1>
+            <button type="submit" class="btn btn-primary">Save{% if not is_new %}{% endif %}</button>
+        </div>
+
+        {% for field, msg in errors %}
+            <div class="msg error">{{ msg }}</div>
+        {% endfor %}
+
+        <div class="panel">
+            <h3>Server</h3>
+
+            <div class="field">
+                <label for="server-name">Name</label>
+                <input type="text" id="server-name" name="name" value="{{ server.name }}" placeholder="e.g. mcp-server" class="input">
+            </div>
+
+            <div class="field">
+                <label for="server-description">Description</label>
+                <textarea id="server-description" name="description" rows="2" placeholder="Optional note about this server" class="input">{{ server.description }}</textarea>
+            </div>
+
+            <div class="field">
+                <label for="server-transport">Transport</label>
+                <select id="server-transport" name="transport" class="input">
+                    <option value="openapi" {% if server.transport == 'openapi' %}selected{% endif %}>OpenAPI (REST)</option>
+                    <option value="http" {% if server.transport == 'http' %}selected{% endif %}>HTTP streamable MCP</option>
+                </select>
+                <p class="muted field-note">OpenAPI servers are discovered via <span class="mono">/openapi.json</span>; HTTP MCP servers via <span class="mono">tools/list</span>.</p>
+            </div>
+
+            <div class="field">
+                <label for="server-endpoint">Base URL / endpoint</label>
+                <input type="url" id="server-endpoint" name="endpoint" value="{{ server.endpoint }}" placeholder="https://mcp.example.com" class="input mono" required>
+                <p class="muted field-note">For OpenAPI: the base URL the spec is served from. For HTTP MCP: the <span class="mono">/mcp</span> streamable endpoint.</p>
+            </div>
+
+            <div class="field">
+                <label>Credential env vars <span class="muted">(names only — values stay in the environment)</span></label>
+                {% set creds = server.credVars|default([]) %}
+                {% if creds is empty %}{% set creds = [''] %}{% endif %}
+                {% for v in creds %}
+                    <input type="text" name="cred_vars[]" value="{{ v }}" placeholder="e.g. MCP_SERVER_API_KEY" class="input mono" style="margin-bottom:6px;">
+                {% endfor %}
+                <button type="button" class="btn btn-small" id="add-cred">+ Add cred var</button>
+            </div>
+
+            <div class="field">
+                <label>
+                    <input type="checkbox" name="enabled" value="1" {% if server.enabled %}checked{% endif %}>
+                    Enabled
+                </label>
+                <p class="muted field-note">Disabled servers' tools are not offered to workers.</p>
+            </div>
+        </div>
+
+        {% if not is_new %}
+            <div class="panel">
+                <h3>Tool sync</h3>
+                <p class="muted" style="margin-bottom:12px;">
+                    On save, tool definitions are refreshed from the server. New tools are created with tags from the spec;
+                    existing tools keep their manual tags; tools that vanished are flagged removed.
+                </p>
+                <label style="display:flex; gap:8px; align-items:center; cursor:pointer;">
+                    <input type="checkbox" name="resync" value="1" checked>
+                    Re-sync tool definitions on save
+                </label>
+            </div>
+        {% endif %}
+
+    </form>
+
+    {% if not is_new %}
+        <div class="delete-zone">
+            <form method="post" action="{{ path('app_tool_server_delete', {id: server.id}) }}" class="inline" onsubmit="return confirm('Delete this MCP server and ALL its tool definitions?\\n\\nThis cannot be undone.');">
+                <button type="submit" class="btn btn-danger">Delete Server</button>
+            </form>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block stylesheets %}
+    <style>
+        .form-head {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .form-head h1 { margin: 0 auto 0 0; }
+        .field { margin-bottom: 14px; }
+        .field label {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--muted);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+        .field label:has(input[type="checkbox"]) {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-transform: none;
+            letter-spacing: 0;
+            font-size: 14px;
+            color: var(--text);
+        }
+        .input {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .input:focus { outline: none; border-color: var(--accent); }
+        textarea.input { resize: vertical; font-family: inherit; }
+        .field-note { margin-top: 4px; font-size: 12px; }
+        .delete-zone {
+            border-top: 1px solid var(--border);
+            margin-top: 8px;
+            padding-top: 20px;
+            text-align: center;
+        }
+        .inline { display: inline; }
+    </style>
+{% endblock %}
+
+{% block javascripts %}
+    <script>
+    document.getElementById('add-cred')?.addEventListener('click', function () {
+        const wrap = this.closest('.field');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.name = 'cred_vars[]';
+        input.placeholder = 'e.g. MCP_SERVER_API_KEY';
+        input.className = 'input mono';
+        input.style.marginBottom = '6px';
+        wrap.insertBefore(input, this);
+        input.focus();
+    });
+    </script>
+{% endblock %}
