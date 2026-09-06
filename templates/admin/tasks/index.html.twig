@@ -1,0 +1,43 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Tasks · TaskWeaver{% endblock %}
+
+{% block body %}
+    <h1>Tasks</h1>
+    <p class="subtitle">All tasks defined on the controller.</p>
+
+    {% if tasks is empty %}
+        <div class="panel"><div class="empty">No tasks yet. Seed some with <code class="mono">bin/dev.sh start --seed</code>, or create one via the worker API.</div></div>
+    {% else %}
+    <div class="panel">
+        <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Priority</th>
+                    <th>Steps</th>
+                    <th>Schedule</th>
+                    <th>Next run</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for task in tasks %}
+                <tr>
+                    <td><a href="{{ path('app_task_show', {id: task.id}) }}">{{ task.name }}</a></td>
+                    <td><span class="badge status-{{ task.status }}">{{ task.status }}</span></td>
+                    <td>{{ task.priority }}</td>
+                    <td>{{ task.steps|length }}</td>
+                    <td class="mono">{{ task.schedule ?: '—' }}</td>
+                    <td class="muted">{{ task.nextRunAt ? task.nextRunAt|date('Y-m-d H:i') : '—' }}</td>
+                    <td class="muted">{{ task.createdAt|date('Y-m-d H:i') }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+{% endblock %}

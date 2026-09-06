@@ -158,4 +158,12 @@ class ToolCall
     {
         return $this->timestamp;
     }
+
+    /**
+     * Override the recorded timestamp (used by seeding/tests to backdate).
+     */
+    public function stamp(DateTimeImmutable $at): void
+    {
+        $this->timestamp = $at;
+    }
 }

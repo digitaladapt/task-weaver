@@ -154,6 +154,14 @@ class Event
     }
 
     /**
+     * Override the recorded timestamp (used by seeding/tests to backdate).
+     */
+    public function stamp(DateTimeImmutable $at): void
+    {
+        $this->timestamp = $at;
+    }
+
+    /**
      * @return Collection<int, ToolCall>
      */
     public function getToolCalls(): Collection

@@ -1,23 +1,189 @@
 <!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="UTF-8">
-        <title>{% block title %}Welcome!{% endblock %}</title>
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 128 128%22><text y=%221.2em%22 font-size=%2296%22>⚫️</text><text y=%221.3em%22 x=%220.2em%22 font-size=%2276%22 fill=%22%23fff%22>sf</text></svg>">
-        {% block stylesheets %}
-        {% endblock %}
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}TaskWeaver{% endblock %}</title>
+    {# Clean, dependency-free CSS so the admin UI renders with zero build step. #}
+    <style>
+        :root {
+            --bg: #0f1115;
+            --panel: #171a21;
+            --panel-2: #1e222b;
+            --border: #2a2f3a;
+            --text: #e6e9ef;
+            --muted: #9aa3b2;
+            --accent: #4f8cff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
 
-        {% block javascripts %}
-        {% endblock %}
+        header.nav {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 12px 24px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        header.nav .brand { font-weight: 700; font-size: 15px; letter-spacing: .3px; color: var(--text); }
+        header.nav .brand span { color: var(--accent); }
+        header.nav nav { display: flex; gap: 16px; flex-wrap: wrap; }
+        header.nav nav a { color: var(--muted); font-weight: 500; }
+        header.nav nav a.active, header.nav nav a:hover { color: var(--text); }
 
-        {% set frankenphp_hot_reload = app.request.server.get('FRANKENPHP_HOT_RELOAD') %}
-        {% if frankenphp_hot_reload %}
-        <meta name="frankenphp-hot-reload:url" content="{{ frankenphp_hot_reload }}">
-        <script src="https://cdn.jsdelivr.net/npm/idiomorph"></script>
-        <script src="https://cdn.jsdelivr.net/npm/frankenphp-hot-reload/+esm" type="module"></script>
-        {% endif %}
-    </head>
-    <body>
+        main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+        @media (max-width: 640px) {
+            header.nav { flex-wrap: wrap; gap: 8px 16px; padding: 10px 16px; }
+            main { padding: 16px; }
+        }
+        h1 { font-size: 22px; margin: 0 0 4px; }
+        h2 { font-size: 16px; margin: 0 0 12px; }
+        .subtitle { color: var(--muted); margin: 0 0 20px; }
+
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 28px; }
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .card .num { font-size: 26px; font-weight: 700; }
+        .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+        .card a { display: block; }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        .panel h3 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: nowrap; }
+        th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .5px; }
+        .table-scroll td { white-space: normal; }
+        tr:last-child td { border-bottom: none; }
+
+        @media (max-width: 640px) {
+            th, td {
+                white-space: normal;
+            }
+            .table-scroll { margin: 0 -12px; padding: 0 12px; width: calc(100% + 24px); }
+            .table-scroll td { white-space: normal; }
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: var(--panel-2);
+            color: var(--muted);
+        }
+        .badge.status-draft    { color: var(--muted); }
+        .badge.status-ready    { color: var(--accent); border-color: var(--accent); }
+        .badge.status-running  { color: var(--yellow); border-color: var(--yellow); }
+        .badge.status-completed{ color: var(--green); border-color: var(--green); }
+        .badge.status-failed   { color: var(--red); border-color: var(--red); }
+        .badge.status-paused   { color: var(--muted); }
+        .badge.status-pending  { color: var(--muted); }
+        .badge.bg-green { color: var(--green); border-color: var(--green); }
+        .badge.bg-yellow{ color: var(--yellow); border-color: var(--yellow); }
+        .badge.bg-red   { color: var(--red); border-color: var(--red); }
+        .badge.bg-accent{ color: var(--accent); border-color: var(--accent); }
+
+        .tag {
+            display: inline-block;
+            padding: 1px 7px;
+            margin: 1px 3px 1px 0;
+            border-radius: 4px;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .tool-tags { margin-top: 4px; }
+        .mono { font-family: var(--mono); font-size: 12px; }
+        .muted { color: var(--muted); }
+        .empty { color: var(--muted); font-style: italic; padding: 12px; }
+
+        .timeline { list-style: none; margin: 0; padding: 0; }
+        .timeline li {
+            padding: 8px 0 8px 16px;
+            border-left: 2px solid var(--border);
+            position: relative;
+            margin-left: 4px;
+        }
+        .timeline li::before {
+            content: "";
+            position: absolute;
+            left: -5px; top: 12px;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--border);
+        }
+        .timeline li.type-step_started::before   { background: var(--accent); }
+        .timeline li.type-step_completed::before { background: var(--green); }
+        .timeline li.type-step_failed::before    { background: var(--red); }
+        .timeline li.type-error::before          { background: var(--red); }
+        .timeline .t { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-right: 8px; }
+        .timeline .ev-meta { margin-top: 2px; font-size: 12px; color: var(--muted); }
+
+        .step-box {
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin: 8px 0;
+        }
+        .step-box.final { border-left-color: var(--accent); }
+
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .grid-2 > * { min-width: 0; } /* allow grid children to shrink below content so inner scroll works */
+        @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+
+        .msg { padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+        .msg.success { background: rgba(63,185,80,.12); border: 1px solid var(--green); color: var(--green); }
+        .msg.error { background: rgba(248,81,73,.12); border: 1px solid var(--red); color: var(--red); }
+    </style>
+    {% block stylesheets %}{% endblock %}
+</head>
+<body>
+    <header class="nav">
+        <a class="brand" href="{{ path('app_dashboard') }}">Task<span>Weaver</span></a>
+        <nav>
+            <a href="{{ path('app_dashboard') }}" {% if app.request.attributes.get('_route') == 'app_dashboard' %}class="active"{% endif %}>Dashboard</a>
+            <a href="{{ path('app_tasks') }}" {% if app.request.attributes.get('_route') starts with 'app_task' %}class="active"{% endif %}>Tasks</a>
+            <a href="{{ path('app_tools') }}" {% if app.request.attributes.get('_route') == 'app_tools' %}class="active"{% endif %}>Tools</a>
+            <a href="{{ path('app_workers') }}" {% if app.request.attributes.get('_route') == 'app_workers' %}class="active"{% endif %}>Workers</a>
+        </nav>
+    </header>
+    <main>
         {% block body %}{% endblock %}
-    </body>
+    </main>
+    {% block javascripts %}{% endblock %}
+</body>
 </html>

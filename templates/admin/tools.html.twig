@@ -1,0 +1,52 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Tools · TaskWeaver{% endblock %}
+
+{% block body %}
+    <h1>Tools</h1>
+    <p class="subtitle">MCP servers and their tool definitions. Tools are tag-gated per step.</p>
+
+    {% if servers is empty %}
+        <div class="panel"><div class="empty">No MCP servers configured yet.</div></div>
+    {% endif %}
+
+    {% for server in servers %}
+        <div class="panel">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0;">{{ server.name }}</h3>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <span class="badge mono">{{ server.transport }}</span>
+                    {% if server.enabled %}<span class="badge bg-green">enabled</span>{% else %}<span class="badge bg-red">disabled</span>{% endif %}
+                </div>
+            </div>
+            <div class="mono muted" style="margin:6px 0 12px;">{{ server.endpoint }}</div>
+            {% if server.credVars is not empty %}
+                <div style="margin-bottom:8px;">
+                    <span class="muted" style="font-size:12px;">creds:</span>
+                    {% for v in server.credVars %}<span class="tag">{{ v }}</span>{% endfor %}
+                </div>
+            {% endif %}
+
+            {% if server.toolDefs|length == 0 %}
+                <div class="empty">No tool definitions on this server.</div>
+            {% else %}
+            <div class="table-scroll">
+            <table>
+                <thead><tr><th>Name</th><th>Description</th></tr></thead>
+                <tbody>
+                {% for tool in server.toolDefs %}
+                    <tr>
+                        <td>
+                            <div class="mono">{{ tool.name }}</div>
+                            <div class="tool-tags">{% for tag in tool.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>
+                        </td>
+                        <td class="muted">{{ tool.description ?: '—' }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% endif %}
+        </div>
+    {% endfor %}
+{% endblock %}
