@@ -6,6 +6,7 @@ namespace App\Controller;
 
 use App\Entity\McpServer;
 use App\Repository\McpServerRepository;
+use App\Service\ConnectionTester;
 use App\Service\TagService;
 use App\Service\ToolSyncService;
 
@@ -22,6 +23,7 @@ use function is_array;
 use function sprintf;
 
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
@@ -45,6 +47,7 @@ final class ToolsController extends AbstractController
         private readonly EntityManagerInterface $em,
         private readonly ToolSyncService $sync,
         private readonly TagService $tags,
+        private readonly ConnectionTester $connectionTester,
     ) {
     }
 
@@ -54,6 +57,16 @@ final class ToolsController extends AbstractController
         return $this->render('admin/tools.html.twig', [
             'servers' => $servers->findBy([], ['name' => 'ASC']),
         ]);
+    }
+
+    #[Route('/test-connection', name: 'app_tool_server_test', methods: ['POST'])]
+    public function testConnection(Request $request): JsonResponse
+    {
+        // Validate the submitted settings without persisting anything.
+        // Credentials are env var NAMES only — the browser never sends
+        // secret values; ConnectionTester resolves them from the env at
+        // call time exactly like a real sync.
+        return $this->json($this->connectionTester->test($request->request->all()));
     }
 
     #[Route('/new', name: 'app_tool_server_new', methods: ['GET', 'POST'])]

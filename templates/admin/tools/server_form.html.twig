@@ -44,6 +44,10 @@
                 <label for="server-endpoint">Base URL / endpoint</label>
                 <input type="url" id="server-endpoint" name="endpoint" value="{{ server.endpoint }}" placeholder="https://mcp.example.com" class="input mono" required>
                 <p class="muted field-note">For OpenAPI: the base URL the spec is served from. For HTTP MCP: the <span class="mono">/mcp</span> streamable endpoint.</p>
+                <div class="test-row" style="margin-top:8px;">
+                    <button type="button" class="btn" id="test-connection">Test Connection</button>
+                    <span class="muted" style="font-size:12px;" id="test-result"></span>
+                </div>
             </div>
 
             <div class="field">
@@ -152,6 +156,56 @@
         input.style.marginBottom = '6px';
         wrap.insertBefore(input, this);
         input.focus();
+    });
+
+    const testBtn = document.getElementById('test-connection');
+    const testResult = document.getElementById('test-result');
+
+    function setTestResult(ok, text) {
+        testResult.textContent = text;
+        testResult.style.color = ok ? 'var(--green)' : 'var(--red)';
+    }
+
+    testBtn?.addEventListener('click', async function () {
+        const endpoint = document.getElementById('server-endpoint')?.value?.trim() || '';
+        if (!endpoint) {
+            setTestResult(false, 'Enter an endpoint first.');
+            return;
+        }
+
+        const body = new URLSearchParams();
+        body.set('name', document.getElementById('server-name')?.value || '');
+        body.set('endpoint', endpoint);
+        body.set('transport', document.getElementById('server-transport')?.value || 'openapi');
+        body.set('enabled', document.querySelector('[name="enabled"]')?.checked ? '1' : '');
+        document.querySelectorAll('[name="cred_vars[]"]').forEach(function (el) {
+            if (el.value.trim()) body.append('cred_vars[]', el.value.trim());
+        });
+
+        this.disabled = true;
+        this.textContent = 'Testing…';
+        setTestResult(null, '');
+
+        try {
+            const res = await fetch('{{ path('app_tool_server_test') }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (data.ok) {
+                const names = (data.names || []).slice(0, 6).join(', ');
+                const more = (data.tools || 0) > 6 ? '…' : '';
+                setTestResult(true, 'Connected — discovered ' + data.tools + ' tool(s): ' + names + more);
+            } else {
+                setTestResult(false, 'Failed: ' + (data.error || 'unknown error'));
+            }
+        } catch (e) {
+            setTestResult(false, 'Request failed: ' + e.message);
+        } finally {
+            this.disabled = false;
+            this.textContent = 'Test Connection';
+        }
     });
     </script>
 {% endblock %}
