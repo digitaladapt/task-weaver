@@ -78,6 +78,15 @@ final class SeedCommand extends Command
         ]);
         $server->addToolDef($weatherTool);
 
+        $statusTool = new ToolDef('status.get', ['status']);
+        $statusTool->setDescription('Query an external status page for a service.');
+        $statusTool->setSchema([
+            'type' => 'object',
+            'properties' => ['service' => ['type' => 'string', 'description' => 'Service name, e.g. api']],
+            'required' => ['service'],
+        ]);
+        $server->addToolDef($statusTool);
+
         // --- Sample worker (controller-assigned tags; seen recently) ---
         $worker = new Worker('dev-worker', ['terminal', 'weather', 'echo']);
         $worker->markSeen();
@@ -192,11 +201,80 @@ final class SeedCommand extends Command
         $task2->setStatus(Task::STATUS_COMPLETED);
         $task2->touch();
 
+        // --- Sample failure task: external tool call blew up (final step) ---
+        // Demonstrates the error/step_failed path: the third-party status API
+        // returned 503, so the step failed and the task is marked failed.
+        $task3 = new Task('Site status check', 'Check whether the public site is up.');
+        $this->em->persist($task3);
+
+        $step3 = new Step('Check status', 'Query the external status endpoint for the site.');
+        $step3->setTags(['status']);
+        $step3->setIsFinal(true);
+        $step3->setSortOrder(0);
+        $task3->addStep($step3);
+
+        $u0 = $now->modify('-18 minutes');   // step starts
+        $u1 = $u0->modify('+2 seconds');     // LLM call
+        $u2 = $u1->modify('+2 seconds');     // tool requested
+        $u3 = $u2->modify('+3 seconds');     // upstream error
+        $u4 = $u3->modify('+1 second');      // tool finished (error)
+        $u5 = $u4->modify('+2 seconds');     // step failed
+
+        $step3->setStatus(Step::STATUS_FAILED);
+        $step3->setStartedAt($u0);
+        $step3->setFinishedAt($u5);
+        $step3->setExpiresAt($u0->modify('+600 seconds'));
+        $step3->setResult(null);
+
+        $this->makeEvent($step3, Event::TYPE_STEP_STARTED, $worker, [
+            'expires_at' => $step3->getExpiresAt()?->format('c'),
+        ], $u0);
+
+        $this->makeEvent($step3, Event::TYPE_LLM_CALL, $worker, [
+            'model' => 'llama3.1',
+            'provider' => 'local',
+            'prompt_tokens' => 152,
+            'completion_tokens' => 20,
+        ], $u1);
+
+        $issueEvent = $this->makeEvent($step3, Event::TYPE_TOOL_REQUESTED, $worker, [
+            'tool' => 'status.get',
+            'arguments' => ['service' => 'public-site'],
+        ], $u2);
+        $this->addToolCall(
+            $issueEvent,
+            'status.get',
+            ['service' => 'public-site'],
+            null,
+            'error',
+            'op-2'.base_convert((string) $u2->getTimestamp(), 10, 36),
+            $u2,
+        );
+
+        $this->makeEvent($step3, Event::TYPE_ERROR, $worker, [
+            'tool' => 'status.get',
+            'error' => 'upstream 503: status endpoint timed out',
+        ], $u3);
+
+        $this->makeEvent($step3, Event::TYPE_TOOL_FINISHED, $worker, [
+            'tool' => 'status.get',
+            'status' => 'error',
+            'duration_ms' => 3020,
+        ], $u4);
+
+        $this->makeEvent($step3, Event::TYPE_STEP_FAILED, $worker, [
+            'reason' => 'upstream 503: status endpoint timed out',
+        ], $u5);
+
+        $task3->setStatus(Task::STATUS_FAILED);
+        $task3->touch();
+
         $this->em->flush();
 
         $io->success('Seeded sample data.');
         $io->writeln(sprintf('  Task 1: %s (single-step, final, ready) — unclaimed', $task1->getId()->toRfc4122()));
         $io->writeln(sprintf('  Task 2: %s (multi-step: weather + final) — completed with %d events', $task2->getId()->toRfc4122(), count($task2->getEvents())));
+        $io->writeln(sprintf('  Task 3: %s (single-step, failure) — failed with %d events', $task3->getId()->toRfc4122(), count($task3->getEvents())));
 
         return Command::SUCCESS;
     }
