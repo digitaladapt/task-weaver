@@ -59,6 +59,7 @@ final class SchedulerService
             ->select('t')
             ->from(Task::class, 't')
             ->where('t.schedule IS NOT NULL')
+            ->andWhere('t.deletedAt IS NULL')
             ->andWhere('t.status IN (:statuses)')
             ->setParameter('statuses', [Task::STATUS_DRAFT, Task::STATUS_READY, Task::STATUS_COMPLETED, Task::STATUS_FAILED])
             ->andWhere('t.nextRunAt IS NULL OR t.nextRunAt <= :now')

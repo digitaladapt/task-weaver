@@ -41,8 +41,8 @@ final class ToolController extends AbstractController
             return $this->json(['error' => 'Invalid event key'], Response::HTTP_UNAUTHORIZED);
         }
 
-        // Event must belong to the listed task.
-        if ($event->getTask()->getId()->toRfc4122() !== $taskId) {
+        // Event must belong to the listed task (and the task must not be soft-deleted).
+        if ($event->getTask()->getId()->toRfc4122() !== $taskId || $event->getTask()->isDeleted()) {
             return $this->json(['error' => 'Event does not belong to this task'], Response::HTTP_UNAUTHORIZED);
         }
 

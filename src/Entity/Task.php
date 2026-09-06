@@ -74,6 +74,14 @@ class Task
     private ?DateTimeImmutable $nextRunAt = null;
 
     /**
+     * Soft-delete marker. When set, the task is hidden from the admin UI and
+     * excluded from scheduling/claiming/running, but it and its steps/events
+     * are kept for history preservation (SPEC.md → Soft Delete).
+     */
+    #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?DateTimeImmutable $deletedAt = null;
+
+    /**
      * @var Collection<int, Step>
      */
     #[ORM\OneToMany(mappedBy: 'task', targetEntity: Step::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
@@ -189,6 +197,26 @@ class Task
         $this->nextRunAt = $nextRunAt;
     }
 
+    public function isDeleted(): bool
+    {
+        return null !== $this->deletedAt;
+    }
+
+    public function softDelete(): void
+    {
+        $this->deletedAt = new DateTimeImmutable();
+        // A soft-deleted task must not keep running. If it was scheduled,
+        // clear the next run so the scheduler won't touch it again.
+        $this->setNextRunAt(null);
+        $this->touch();
+    }
+
+    public function restore(): void
+    {
+        $this->deletedAt = null;
+        $this->touch();
+    }
+
     /**
      * @return Collection<int, Step>
      */
@@ -207,11 +235,11 @@ class Task
 
     public function removeStep(Step $step): void
     {
-        if ($this->steps->removeElement($step)) {
-            if ($step->getTask() === $this) {
-                $step->setTask(null);
-            }
-        }
+        // Step.task is non-nullable, so we don't null the back-reference here;
+        // orphanRemoval on the collection handles deleting the row on flush.
+        // (Callers must not remove steps that have already started — see
+        // TaskController::applyForm, which guards on startedAt.)
+        $this->steps->removeElement($step);
     }
 
     /**

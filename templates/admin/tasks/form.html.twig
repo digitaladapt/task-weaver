@@ -1,0 +1,557 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ is_new ? 'New task' : 'Edit task' }} · TaskWeaver{% endblock %}
+
+{% macro step_row(step, n, is_new, can_delete) %}
+    <div class="step-editor-row" data-step-row>
+        <div class="step-editor-head">
+            <span class="step-editor-index">Step {{ n }}</span>
+            {% if step.isFinal %}<span class="badge bg-accent">final</span>{% endif %}
+            {% if can_delete %}
+                <button type="button" class="btn btn-icon btn-danger step-remove" data-remove-step title="Remove this step" aria-label="Remove step">&times;</button>
+            {% endif %}
+        </div>
+        {% if step.id %}
+            <input type="hidden" name="steps[id][]" value="{{ step.id }}">
+        {% endif %}
+        <div class="field">
+            <label for="step-name-{{ step.id }}">Name</label>
+            <input type="text" id="step-name-{{ step.id }}" name="steps[name][]" value="{{ step.name }}" placeholder="e.g. Fetch weather" class="input">
+        </div>
+        <div class="field">
+            <label for="step-desc-{{ step.id }}">Instructions</label>
+            <textarea id="step-desc-{{ step.id }}" name="steps[description][]" rows="3" placeholder="What should this step do?" class="input">{{ step.description }}</textarea>
+        </div>
+        <div class="field">
+            <label>Tags <span class="muted">(tool tags this step may use)</span></label>
+            <div class="tag-field" data-tag-field>
+                <div class="tag-bubbles" data-tag-bubbles>
+                    {% for tag in step.tags %}
+                        <span class="tag-bubble" data-tag="{{ tag }}">{{ tag }}<span class="tag-x" data-remove-tag>&times;</span></span>
+                    {% endfor %}
+                </div>
+                <input type="text" class="tag-input" placeholder="Type a tag or choose…" autocomplete="off" data-tag-input>
+                <input type="hidden" name="steps[tags][]" value="{{ step.tags|join(',') }}" data-tag-value>
+                <div class="tag-dropdown" data-tag-dropdown hidden></div>
+            </div>
+        </div>
+    </div>
+{% endmacro %}
+
+{% block body %}
+    {% import _self as forms %}
+
+    <form method="post" action="{% if is_new %}{{ path('app_task_new') }}{% else %}{{ path('app_task_edit', {id: task.id}) }}{% endif %}" class="task-form">
+        <div class="form-head">
+            {% if is_new %}
+                <a href="{{ path('app_tasks') }}" class="btn btn-ghost">Cancel</a>
+            {% else %}
+                <a href="{{ path('app_task_show', {id: task.id}) }}" class="btn btn-ghost">Cancel</a>
+            {% endif %}
+            <h1>{{ is_new ? 'New task' : 'Edit task' }}</h1>
+            <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+
+        {% for field, msg in errors %}
+            <div class="msg error">{{ msg }}</div>
+        {% endfor %}
+
+        <div class="panel">
+            <h3>Task</h3>
+            <div class="field">
+                <label for="task-name">Name</label>
+                <input type="text" id="task-name" name="name" value="{{ task.name }}" placeholder="e.g. Morning agenda" class="input">
+            </div>
+            <div class="field">
+                <label for="task-desc">Description</label>
+                <textarea id="task-desc" name="description" rows="4" placeholder="What is this task trying to achieve?" class="input">{{ task.description }}</textarea>
+            </div>
+            <div class="field schedule-field">
+                <label for="task-schedule-type">Schedule</label>
+                <select id="task-schedule-type" name="schedule_type" class="input" data-schedule-type>
+                    <option value="one-off" {% if schedule.type == 'one-off' %}selected{% endif %}>One-off (no schedule)</option>
+                    <option value="minutes" {% if schedule.type == 'minutes' %}selected{% endif %}>Every N minutes</option>
+                    <option value="hours" {% if schedule.type == 'hours' %}selected{% endif %}>Every N hours</option>
+                    <option value="days" {% if schedule.type == 'days' %}selected{% endif %}>Daily</option>
+                    <option value="weeks" {% if schedule.type == 'weeks' %}selected{% endif %}>Weekly</option>
+                    <option value="months" {% if schedule.type == 'months' %}selected{% endif %}>Monthly</option>
+                    <option value="custom" {% if schedule.type == 'custom' %}selected{% endif %}>Custom (cron)</option>
+                </select>
+
+                <div class="schedule-options" data-schedule-options="minutes" {% if schedule.type != 'minutes' %}hidden{% endif %}>
+                    <label for="task-schedule-number">Every</label>
+                    <input type="number" id="task-schedule-number" name="schedule_number" value="{{ schedule.number ?? 5 }}" min="1" max="60" class="input schedule-number">
+                    <span class="schedule-unit">minute(s)</span>
+                </div>
+
+                <div class="schedule-options" data-schedule-options="hours" {% if schedule.type != 'hours' %}hidden{% endif %}>
+                    <label for="task-schedule-hours">Every</label>
+                    <input type="number" id="task-schedule-hours" name="schedule_number" value="{{ schedule.number ?? 1 }}" min="1" max="24" class="input schedule-number">
+                    <span class="schedule-unit">hour(s)</span>
+                    <label for="task-schedule-minute">at minute</label>
+                    <input type="number" id="task-schedule-minute" name="schedule_minute" value="{{ schedule.minute ?? 0 }}" min="0" max="59" class="input schedule-number">
+                </div>
+
+                <div class="schedule-options" data-schedule-options="days" {% if schedule.type != 'days' %}hidden{% endif %}>
+                    <label for="task-schedule-days">Every</label>
+                    <select id="task-schedule-days" name="schedule_days" class="input schedule-select">
+                        <option value="everyday" {% if schedule.days|default('everyday') == 'everyday' %}selected{% endif %}>day</option>
+                        <option value="weekends" {% if schedule.days|default('everyday') == 'weekends' %}selected{% endif %}>weekends</option>
+                        <option value="weekdays" {% if schedule.days|default('everyday') == 'weekdays' %}selected{% endif %}>weekdays</option>
+                    </select>
+                    <span class="schedule-unit">at</span>
+                    <select id="task-schedule-time" name="schedule_time" class="input schedule-select">
+                        <option value="morning" {% if schedule.time|default('morning') == 'morning' %}selected{% endif %}>morning</option>
+                        <option value="afternoon" {% if schedule.time|default('morning') == 'afternoon' %}selected{% endif %}>afternoon</option>
+                        <option value="evening" {% if schedule.time|default('morning') == 'evening' %}selected{% endif %}>evening</option>
+                        <option value="night" {% if schedule.time|default('morning') == 'night' %}selected{% endif %}>night</option>
+                    </select>
+                </div>
+
+                <div class="schedule-options" data-schedule-options="weeks" {% if schedule.type != 'weeks' %}hidden{% endif %}>
+                    <label for="task-schedule-day">Every</label>
+                    <select id="task-schedule-day" name="schedule_day" class="input schedule-select">
+                        {% for day in ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'] %}
+                            <option value="{{ day }}" {% if schedule.day|default('Monday') == day %}selected{% endif %}>{{ day }}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="schedule-unit">at</span>
+                    <select name="schedule_time" class="input schedule-select">
+                        <option value="morning" {% if schedule.time|default('morning') == 'morning' %}selected{% endif %}>morning</option>
+                        <option value="afternoon" {% if schedule.time|default('morning') == 'afternoon' %}selected{% endif %}>afternoon</option>
+                        <option value="evening" {% if schedule.time|default('morning') == 'evening' %}selected{% endif %}>evening</option>
+                        <option value="night" {% if schedule.time|default('morning') == 'night' %}selected{% endif %}>night</option>
+                    </select>
+                </div>
+
+                <div class="schedule-options" data-schedule-options="months" {% if schedule.type != 'months' %}hidden{% endif %}>
+                    <label for="task-schedule-month-day">On the</label>
+                    <select id="task-schedule-month-day" name="schedule_day" class="input schedule-select">
+                        {% for d in 1..28 %}
+                            <option value="{{ d }}" {% if schedule.day|default(1) == d %}selected{% endif %}>{{ d }}{% if d in [1,21] %}st{% elseif d in [2,22] %}nd{% elseif d in [3,23] %}rd{% else %}th{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="schedule-unit">at</span>
+                    <select name="schedule_time" class="input schedule-select">
+                        <option value="morning" {% if schedule.time|default('morning') == 'morning' %}selected{% endif %}>morning</option>
+                        <option value="afternoon" {% if schedule.time|default('morning') == 'afternoon' %}selected{% endif %}>afternoon</option>
+                        <option value="evening" {% if schedule.time|default('morning') == 'evening' %}selected{% endif %}>evening</option>
+                        <option value="night" {% if schedule.time|default('morning') == 'night' %}selected{% endif %}>night</option>
+                    </select>
+                </div>
+
+                <div class="schedule-options" data-schedule-options="custom" {% if schedule.type != 'custom' %}hidden{% endif %}>
+                    <label for="task-schedule-cron">Cron expression</label>
+                    <input type="text" id="task-schedule-cron" name="schedule_cron" value="{{ schedule.cron ?? '' }}" placeholder="e.g. 0 8 * * 1-5" class="input mono">
+                </div>
+                <p class="muted schedule-hint">
+                    {% if schedule.type == 'one-off' %}Runs once when manually triggered.{% else %}The cron expression is generated from your selection.{% endif %}
+                </p>
+            </div>
+            <div class="field">
+                <label for="task-priority">Priority</label>
+                <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="0" step="1" class="input">
+            </div>
+            <div class="field">
+                <label for="task-timezone">Timezone</label>
+                <input type="text" id="task-timezone" name="timezone" value="{{ task.timezone }}" placeholder="UTC" class="input mono">
+            </div>
+        </div>
+
+        <div class="panel steps-panel">
+            <div class="panel-head">
+                <h3>Steps</h3>
+                <button type="button" id="add-step" class="btn btn-small">+ Add Step</button>
+            </div>
+            <div id="step-list">
+                {% set total = task.steps|length %}
+                {% for step in task.steps %}
+                    {{ forms.step_row(step, loop.index, is_new, not loop.last) }}
+                {% endfor %}
+            </div>
+            <div class="muted" style="font-size:12px; margin-top:8px;">
+                The final step is fixed at the bottom; new steps are added just above it. Non-final steps run in parallel and their results feed the final step.
+            </div>
+        </div>
+
+    </form>
+
+    {% if not is_new %}
+        <div class="delete-zone">
+            <form method="post" action="{{ path('app_task_delete', {id: task.id}) }}" class="inline" onsubmit="return confirm('Delete this task?\\n\\nIt will be hidden and disabled from running, but its steps and history are kept.');">
+                <button type="submit" class="btn btn-danger">Delete Task</button>
+            </form>
+        </div>
+    {% endif %}
+
+    {# Blank template for JS-added steps — mirrors the macro markup. #}
+    <template id="step-row-template">
+        <div class="step-editor-row" data-step-row>
+            <div class="step-editor-head">
+                <span class="step-editor-index">Step</span>
+                <button type="button" class="btn btn-icon btn-danger step-remove" data-remove-step title="Remove this step" aria-label="Remove step">&times;</button>
+            </div>
+            <div class="field">
+                <label>Name</label>
+                <input type="text" name="steps[name][]" placeholder="e.g. Fetch weather" class="input">
+            </div>
+            <div class="field">
+                <label>Instructions</label>
+                <textarea name="steps[description][]" rows="3" placeholder="What should this step do?" class="input"></textarea>
+            </div>
+            <div class="field">
+                <label>Tags <span class="muted">(tool tags this step may use)</span></label>
+                <div class="tag-field" data-tag-field>
+                    <div class="tag-bubbles" data-tag-bubbles></div>
+                    <input type="text" class="tag-input" placeholder="Type a tag or choose…" autocomplete="off" data-tag-input>
+                    <input type="hidden" name="steps[tags][]" value="" data-tag-value>
+                    <div class="tag-dropdown" data-tag-dropdown hidden></div>
+                </div>
+            </div>
+        </div>
+    </template>
+{% endblock %}
+
+{% block stylesheets %}
+    <style>
+        .form-head {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .form-head h1 { margin: 0 auto 0 0; }
+
+        .btn {
+            display: inline-block;
+            padding: 7px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: var(--panel-2);
+            color: var(--text);
+            cursor: pointer;
+            text-decoration: none;
+            line-height: 1.4;
+        }
+        .btn:hover { filter: brightness(1.15); text-decoration: none; }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn-ghost { background: transparent; }
+        .btn-danger { background: transparent; border-color: var(--red); color: var(--red); }
+        .btn-icon {
+            padding: 2px 8px;
+            font-size: 16px;
+            line-height: 1;
+            border-radius: 4px;
+        }
+        .btn-small { padding: 4px 10px; font-size: 12px; }
+
+        .field { margin-bottom: 12px; }
+        .field label {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--muted);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+        .input {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .input:focus { outline: none; border-color: var(--accent); }
+        textarea.input { resize: vertical; font-family: inherit; }
+
+        .panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        .panel-head h3 { margin: 0; }
+
+        .step-editor-row {
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin: 10px 0;
+        }
+        .step-editor-row:last-child { border-left-color: var(--accent); }
+        .step-editor-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .step-editor-index {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--muted);
+        }
+        .step-remove { margin-left: auto; }
+
+        /* Tag picker */
+        .tag-field { position: relative; }
+        .tag-bubbles { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+        .tag-bubble {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--panel);
+            border: 1px solid var(--accent);
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--accent);
+        }
+        .tag-x {
+            cursor: pointer;
+            font-weight: 700;
+            opacity: .7;
+        }
+        .tag-x:hover { opacity: 1; }
+        .tag-input { width: 100%; }
+        .tag-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 30;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-top: 4px;
+            max-height: 220px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0,0,0,.5);
+            padding: 4px;
+        }
+        .tag-dropdown .tag-option {
+            padding: 7px 10px;
+            border-radius: 5px;
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .tag-dropdown .tag-option:hover, .tag-dropdown .tag-option.hover {
+            background: var(--panel);
+            color: var(--accent);
+        }
+        .tag-dropdown .tag-option.empty { color: var(--muted); cursor: default; font-style: italic; font-family: inherit; justify-content: flex-start; }
+
+        .delete-zone {
+            border-top: 1px solid var(--border);
+            margin-top: 8px;
+            padding-top: 20px;
+            text-align: center;
+        }
+        .inline { display: inline; }
+
+        /* Schedule picker */
+        .schedule-field { }
+        .schedule-options {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+            padding: 10px 12px;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .schedule-options[hidden] { display: none; }
+        .schedule-options label {
+            margin: 0;
+            font-size: 12px;
+            text-transform: none;
+            letter-spacing: 0;
+            color: var(--muted);
+            font-weight: 500;
+            display: inline;
+        }
+        .schedule-number { width: 80px; display: inline-block; }
+        .schedule-select { width: auto; display: inline-block; }
+        .schedule-unit { color: var(--muted); font-size: 13px; }
+        .schedule-hint { margin-top: 6px; font-size: 12px; }
+    </style>
+{% endblock %}
+
+{% block javascripts %}
+    <script>
+    (function () {
+        const ALL_TAGS = {{ all_tags|json_encode|raw }};
+        const list = document.getElementById('step-list');
+        const template = document.getElementById('step-row-template');
+
+        // ── Schedule picker ────────────────────────────────────────────────
+        const scheduleType = document.querySelector('[data-schedule-type]');
+        const scheduleOptions = document.querySelectorAll('[data-schedule-options]');
+        function updateScheduleOptions() {
+            const t = scheduleType.value;
+            scheduleOptions.forEach(function (el) {
+                el.hidden = el.dataset.scheduleOptions !== t;
+            });
+            const hint = document.querySelector('.schedule-hint');
+            if (hint) {
+                hint.textContent = t === 'one-off'
+                    ? 'Runs once when manually triggered.'
+                    : t === 'custom'
+                        ? 'Enter any valid cron expression.'
+                        : 'The cron expression is generated from your selection.';
+            }
+        }
+        if (scheduleType) scheduleType.addEventListener('change', updateScheduleOptions);
+
+        // ── Step add/remove ────────────────────────────────────────────────
+        function addStep() {
+            const frag = template.content.cloneNode(true);
+            const row = frag.querySelector('[data-step-row]');
+            bindTagField(row);
+            // Insert directly above the final step row (the last row).
+            const finalRow = list.querySelector('.step-editor-row:last-child');
+            if (finalRow) {
+                // If the last row isn't flagged final in DOM, still insert before it.
+                list.insertBefore(row, finalRow);
+            } else {
+                list.appendChild(row);
+            }
+            renumber();
+            row.querySelector('[data-tag-input]').focus();
+        }
+        document.getElementById('add-step').addEventListener('click', addStep);
+
+        list.addEventListener('click', function (e) {
+            const btn = e.target.closest('[data-remove-step]');
+            if (!btn) return;
+            const row = btn.closest('[data-step-row]');
+            // Never remove the final (last) step row.
+            if (row === list.querySelector('.step-editor-row:last-child')) return;
+            row.remove();
+            renumber();
+        });
+
+        function renumber() {
+            const rows = list.querySelectorAll('.step-editor-row');
+            rows.forEach(function (r, i) {
+                const idx = r.querySelector('.step-editor-index');
+                if (idx) idx.textContent = 'Step ' + (i + 1);
+            });
+        }
+
+        // ── Tag picker ─────────────────────────────────────────────────────
+        function selectedTags(field) {
+            return (field.querySelector('[data-tag-value]').value || '')
+                .split(',')
+                .map(s => s.trim())
+                .filter(Boolean);
+        }
+        function setSelected(field, tags) {
+            const valueEl = field.querySelector('[data-tag-value]');
+            valueEl.value = tags.join(',');
+            const bubbles = field.querySelector('[data-tag-bubbles]');
+            bubbles.innerHTML = '';
+            tags.forEach(function (t) {
+                const el = document.createElement('span');
+                el.className = 'tag-bubble';
+                el.dataset.tag = t;
+                el.innerHTML = t + '<span class="tag-x" data-remove-tag>&times;</span>';
+                bubbles.appendChild(el);
+            });
+        }
+        function renderDropdown(field, filter) {
+            const input = field.querySelector('[data-tag-input]');
+            const dd = field.querySelector('[data-tag-dropdown]');
+            const current = selectedTags(field);
+            const f = (filter || '').toLowerCase();
+            const options = ALL_TAGS.filter(t =>
+                t.toLowerCase().includes(f) && !current.includes(t)
+            ).slice(0, 12);
+
+            if (options.length === 0 && !filter) {
+                dd.hidden = true;
+                dd.innerHTML = '';
+                return;
+            }
+            dd.hidden = false;
+            dd.innerHTML = '';
+            if (options.length === 0) {
+                const div = document.createElement('div');
+                div.className = 'tag-option empty';
+                div.textContent = filter ? 'No matching tags' : 'No more tags';
+                dd.appendChild(div);
+                return;
+            }
+            options.forEach(function (t) {
+                const div = document.createElement('div');
+                div.className = 'tag-option';
+                div.textContent = t;
+                div.addEventListener('mousedown', function (ev) {
+                    ev.preventDefault(); // keep input focus
+                    const sel = selectedTags(field);
+                    if (!sel.includes(t)) sel.push(t);
+                    setSelected(field, sel);
+                    input.value = '';
+                    renderDropdown(field, '');
+                });
+                dd.appendChild(div);
+            });
+        }
+        function bindTagField(field) {
+            const input = field.querySelector('[data-tag-input]');
+            const dd = field.querySelector('[data-tag-dropdown]');
+
+            input.addEventListener('focus', function () { renderDropdown(field, input.value); });
+            input.addEventListener('input', function () { renderDropdown(field, input.value); });
+
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    const val = input.value.trim();
+                    if (!val) return;
+                    const sel = selectedTags(field);
+                    if (!sel.includes(val)) sel.push(val);
+                    setSelected(field, sel);
+                    input.value = '';
+                    renderDropdown(field, '');
+                } else if (e.key === 'Escape') {
+                    dd.hidden = true;
+                }
+            });
+
+            field.addEventListener('click', function (e) {
+                const x = e.target.closest('[data-remove-tag]');
+                if (!x) return;
+                const tag = x.closest('.tag-bubble').dataset.tag;
+                const sel = selectedTags(field).filter(t => t !== tag);
+                setSelected(field, sel);
+                renderDropdown(field, input.value);
+            });
+
+            document.addEventListener('click', function (e) {
+                if (!field.contains(e.target)) dd.hidden = true;
+            });
+            dd.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        }
+
+        // Bind existing rows.
+        list.querySelectorAll('[data-tag-field]').forEach(bindTagField);
+    })();
+    </script>
+{% endblock %}

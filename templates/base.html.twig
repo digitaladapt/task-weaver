@@ -168,6 +168,35 @@
         .msg { padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
         .msg.success { background: rgba(63,185,80,.12); border: 1px solid var(--green); color: var(--green); }
         .msg.error { background: rgba(248,81,73,.12); border: 1px solid var(--red); color: var(--red); }
+
+        .page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+        .page-head h1 { margin: 0; }
+        .page-head .spacer { flex: 1; }
+
+        .btn {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: var(--panel-2);
+            color: var(--text);
+            cursor: pointer;
+            text-decoration: none;
+            line-height: 1.5;
+        }
+        .btn:hover { filter: brightness(1.15); text-decoration: none; }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn-ghost { background: transparent; }
+        .btn-danger { background: transparent; border-color: var(--red); color: var(--red); }
+        .btn-icon {
+            padding: 1px 8px;
+            font-size: 16px;
+            line-height: 1.4;
+            border-radius: 4px;
+        }
+        .btn-small { padding: 3px 10px; font-size: 12px; }
     </style>
     {% block stylesheets %}{% endblock %}
 </head>

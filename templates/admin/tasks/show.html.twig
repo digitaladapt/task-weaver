@@ -3,7 +3,11 @@
 {% block title %}{{ task.name }} · TaskWeaver{% endblock %}
 
 {% block body %}
-    <p><a href="{{ path('app_tasks') }}">← All tasks</a></p>
+    <div class="page-head">
+        <a href="{{ path('app_tasks') }}">← All tasks</a>
+        <span class="spacer"></span>
+        <a class="btn" href="{{ path('app_task_edit', {id: task.id}) }}">Edit</a>
+    </div>
     <h1>{{ task.name }}</h1>
     <p class="subtitle">
         <span class="badge status-{{ task.status }}">{{ task.status }}</span>

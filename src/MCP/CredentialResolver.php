@@ -6,6 +6,8 @@ namespace App\MCP;
 
 use App\Entity\McpServer;
 
+use function is_string;
+
 /**
  * Resolves credential values for an MCP server from the environment.
  *
@@ -46,7 +48,7 @@ final class CredentialResolver
             $value = $_ENV[$var] ?? $_SERVER[$var] ?? null;
         }
 
-        if (!\is_string($value) || '' === $value) {
+        if (!is_string($value) || '' === $value) {
             return null;
         }
 

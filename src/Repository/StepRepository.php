@@ -43,6 +43,7 @@ class StepRepository extends ServiceEntityRepository
             ->join('s.task', 't')
             ->where('s.status = :pending OR (s.status = :running AND s.expiresAt < :now)')
             ->andWhere('t.status = :taskStatus')
+            ->andWhere('t.deletedAt IS NULL')
             ->setParameter('pending', Step::STATUS_PENDING)
             ->setParameter('running', Step::STATUS_RUNNING)
             ->setParameter('now', $now)
@@ -90,8 +91,10 @@ class StepRepository extends ServiceEntityRepository
     public function findStaleRunning(DateTimeImmutable $now): array
     {
         return $this->createQueryBuilder('s')
+            ->join('s.task', 't')
             ->where('s.status = :running')
             ->andWhere('s.expiresAt < :now')
+            ->andWhere('t.deletedAt IS NULL')
             ->setParameter('running', Step::STATUS_RUNNING)
             ->setParameter('now', $now)
             ->getQuery()
