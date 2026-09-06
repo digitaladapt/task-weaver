@@ -433,6 +433,27 @@
             }
         }
 
+        // ── Schedule number clamp ──────────────────────────────────────────
+        // Same deal as priority: min/max on a number input don't stop you
+        // typing an out-of-range value. Snap to the range on blur, and again
+        // on submit in case focus is still in the field.
+        function clampNumber(input) {
+            return function () {
+                if (input.value === '' || Number.isNaN(Number(input.value))) return;
+                const min = Number(input.min);
+                const max = Number(input.max);
+                if (input.min === '' && input.max === '') return;
+                if (input.min !== '' && Number(input.value) < min) input.value = String(min);
+                if (input.max !== '' && Number(input.value) > max) input.value = String(max);
+            };
+        }
+        document.querySelectorAll('.schedule-options input[type="number"]').forEach(function (input) {
+            const fn = clampNumber(input);
+            input.addEventListener('blur', fn);
+            const form = input.closest('form');
+            if (form) form.addEventListener('submit', fn);
+        });
+
         // ── Schedule picker ────────────────────────────────────────────────
         const scheduleType = document.querySelector('[data-schedule-type]');
         const scheduleOptions = document.querySelectorAll('[data-schedule-options]');
@@ -440,6 +461,13 @@
             const t = scheduleType.value;
             scheduleOptions.forEach(function (el) {
                 el.hidden = el.dataset.scheduleOptions !== t;
+                // Disable hidden blocks so they don't submit duplicate-named
+                // fields that would override the visible block's value
+                // (PHP takes the last value for repeated names). The visible
+                // block is enabled on load below.
+                el.querySelectorAll('input, select, button').forEach(function (ctrl) {
+                    ctrl.disabled = el.hidden;
+                });
             });
             const hint = document.querySelector('.schedule-hint');
             if (hint) {
@@ -450,7 +478,11 @@
                         : 'The cron expression is generated from your selection.';
             }
         }
-        if (scheduleType) scheduleType.addEventListener('change', updateScheduleOptions);
+        if (scheduleType) {
+            // Initial state: enable only the block matching the current type.
+            updateScheduleOptions();
+            scheduleType.addEventListener('change', updateScheduleOptions);
+        }
 
         // ── Step add/remove ────────────────────────────────────────────────
         function addStep() {
