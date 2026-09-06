@@ -206,11 +206,16 @@
         <nav>
             <a href="{{ path('app_dashboard') }}" {% if app.request.attributes.get('_route') == 'app_dashboard' %}class="active"{% endif %}>Dashboard</a>
             <a href="{{ path('app_tasks') }}" {% if app.request.attributes.get('_route') starts with 'app_task' %}class="active"{% endif %}>Tasks</a>
-            <a href="{{ path('app_tools') }}" {% if app.request.attributes.get('_route') == 'app_tools' %}class="active"{% endif %}>Tools</a>
+            <a href="{{ path('app_tools') }}" {% if app.request.attributes.get('_route') starts with 'app_tool' %}class="active"{% endif %}>Tools</a>
             <a href="{{ path('app_workers') }}" {% if app.request.attributes.get('_route') == 'app_workers' %}class="active"{% endif %}>Workers</a>
         </nav>
     </header>
     <main>
+        {% for type, messages in app.flashes %}
+            {% for message in messages %}
+                <div class="msg {{ type }}">{{ message }}</div>
+            {% endfor %}
+        {% endfor %}
         {% block body %}{% endblock %}
     </main>
     {% block javascripts %}{% endblock %}

@@ -22,4 +22,12 @@ class ToolDefRepository extends ServiceEntityRepository
     {
         return $this->findOneBy(['name' => $name]);
     }
+
+    /**
+     * Find a tool on a given server by name (the natural key per server).
+     */
+    public function findByNameForServer(string $name, string $serverId): ?ToolDef
+    {
+        return $this->findOneBy(['name' => $name, 'server' => $serverId]);
+    }
 }

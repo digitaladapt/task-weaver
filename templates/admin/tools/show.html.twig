@@ -1,0 +1,379 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ server.name }} · Tools · TaskWeaver{% endblock %}
+
+{% block body %}
+    <div class="page-head">
+        <a href="{{ path('app_tools') }}" class="btn btn-ghost">All servers</a>
+        <h1>{{ server.name }}</h1>
+        <span class="spacer"></span>
+        <a class="btn" href="{{ path('app_tool_server_edit', {id: server.id}) }}">Edit</a>
+        <form method="post" action="{{ path('app_tool_server_sync', {id: server.id}) }}" class="inline" onsubmit="return confirm('Re-sync tool definitions from the server?\\n\\nExisting tools keep their manual tags; new tools are created; tools that vanished are flagged removed.');">
+            <button type="submit" class="btn btn-primary">Sync Now</button>
+        </form>
+    </div>
+
+    <div class="panel">
+        <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+            <div>
+                <span class="badge mono">{{ server.transport }}</span>
+                {% if server.enabled %}<span class="badge bg-green">enabled</span>{% else %}<span class="badge bg-red">disabled</span>{% endif %}
+            </div>
+            <div class="mono muted">{{ server.endpoint }}</div>
+            {% if server.credVars is not empty %}
+                <div>
+                    <span class="muted" style="font-size:12px;">creds:</span>
+                    {% for v in server.credVars %}<span class="tag">{{ v }}</span>{% endfor %}
+                </div>
+            {% endif %}
+        </div>
+        {% if server.description %}
+            <p style="margin:10px 0 0; color:var(--muted);">{{ server.description }}</p>
+        {% endif %}
+    </div>
+
+    <form method="post" action="{{ path('app_tool_server_save_tags', {id: server.id}) }}">
+        <div class="panel">
+            <div class="panel-head">
+                <h3>Tool Definitions</h3>
+                <span class="muted" style="font-size:12px;">Tags are manual — seed once from the spec, preserved on re-sync. Untagged tools are disabled.</span>
+            </div>
+            <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Tags</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for tool in server.toolDefs %}
+                    <tr class="{{ tool.removed ? 'row-removed' : '' }}">
+                        <td>
+                            <div class="mono">{{ tool.name }}</div>
+                        </td>
+                        <td style="min-width:260px;">
+                            {% if tool.removed %}
+                                <div class="tag-field" data-tag-field data-disabled>
+                                    <div class="tag-bubbles" data-tag-bubbles>
+                                        {% for tag in tool.tags %}
+                                            <span class="tag-bubble">{{ tag }}</span>
+                                        {% endfor %}
+                                    </div>
+                                    <input type="text" class="tag-input" placeholder="—" disabled autocomplete="off" data-tag-input>
+                                    <input type="hidden" name="tool_tags[{{ tool.id }}]" value="{{ tool.tags|join(',') }}" data-tag-value disabled>
+                                    <div class="tag-dropdown" data-tag-dropdown hidden></div>
+                                </div>
+                            {% else %}
+                                <div class="tag-field" data-tag-field>
+                                    <div class="tag-bubbles" data-tag-bubbles>
+                                        {% for tag in tool.tags %}
+                                            <span class="tag-bubble" data-tag="{{ tag }}">{{ tag }}<span class="tag-x" data-remove-tag>&times;</span></span>
+                                        {% endfor %}
+                                    </div>
+                                    <input type="text" class="tag-input" placeholder="Type a tag or choose…" autocomplete="off" data-tag-input>
+                                    <input type="hidden" name="tool_tags[{{ tool.id }}]" value="{{ tool.tags|join(',') }}" data-tag-value>
+                                    <div class="tag-dropdown" data-tag-dropdown hidden></div>
+                                </div>
+                            {% endif %}
+                        </td>
+                        <td class="muted">{{ tool.description ?: '—' }}</td>
+                        <td>
+                            {% if tool.removed %}
+                                <span class="badge bg-yellow" title="No longer defined on the server">removed</span>
+                            {% else %}
+                                <span class="badge bg-green" title="Defined on the server">live</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="4"><div class="empty">No tool definitions yet. Sync to pull them from the server.</div></td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% if server.toolDefs|length > 0 %}
+                <div style="margin-top:12px; text-align:right;">
+                    <button type="submit" class="btn btn-small">Save Tags</button>
+                </div>
+            {% endif %}
+        </div>
+    </form>
+
+    <div class="delete-zone" style="margin-top:8px; padding-top:20px; border-top:1px solid var(--border); text-align:center;">
+        <form method="post" action="{{ path('app_tool_server_delete', {id: server.id}) }}" class="inline" onsubmit="return confirm('Delete this MCP server and ALL its tool definitions?\\n\\nThis cannot be undone.');">
+            <button type="submit" class="btn btn-danger">Delete Server</button>
+        </form>
+    </div>
+{% endblock %}
+
+{% block stylesheets %}
+    <style>
+        .inline { display: inline; }
+        .row-removed td { opacity: .55; }
+        .row-removed td { background: rgba(210,153,34,.04); }
+
+        /* Tag picker — mirrors the task form's component */
+        .tag-field { position: relative; }
+        .tag-bubbles { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+        .tag-bubble {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--panel);
+            border: 1px solid var(--accent);
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--accent);
+        }
+        .tag-x { cursor: pointer; font-weight: 700; opacity: .7; }
+        .tag-x:hover { opacity: 1; }
+        .tag-input {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .tag-input:focus { outline: none; border-color: var(--accent); }
+        .tag-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 30;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-top: 4px;
+            max-height: 220px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0,0,0,.5);
+            padding: 4px;
+        }
+        .tag-dropdown .tag-option {
+            padding: 7px 10px;
+            border-radius: 5px;
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .tag-dropdown .tag-option:hover, .tag-dropdown .tag-option.hover {
+            background: var(--panel);
+            color: var(--accent);
+        }
+        .tag-dropdown .tag-option.new-tag { color: var(--green); }
+        .tag-dropdown .tag-option.empty { color: var(--muted); cursor: default; font-style: italic; font-family: inherit; justify-content: flex-start; }
+        .tag-field[data-disabled] .tag-input { opacity: .5; }
+    </style>
+{% endblock %}
+
+{% block javascripts %}
+    <script>
+    (function () {
+        // Shared, mutable tag pool across ALL tool rows on this page.
+        // Seeded from the globally-known tags; grows live as new tags are
+        // typed on any tool — so a brand-new tag becomes available in the
+        // autocomplete of the other tools before it's ever saved.
+        const POOL = {{ all_tags|json_encode|raw }};
+
+        function selectedTags(field) {
+            return (field.querySelector('[data-tag-value]').value || '')
+                .split(',')
+                .map(s => s.trim())
+                .filter(Boolean);
+        }
+        function setSelected(field, tags) {
+            const valueEl = field.querySelector('[data-tag-value]');
+            valueEl.value = tags.join(',');
+            const bubbles = field.querySelector('[data-tag-bubbles]');
+            bubbles.innerHTML = '';
+            tags.forEach(function (t) {
+                const el = document.createElement('span');
+                el.className = 'tag-bubble';
+                el.dataset.tag = t;
+                el.innerHTML = t + '<span class="tag-x" data-remove-tag>&times;</span>';
+                bubbles.appendChild(el);
+            });
+        }
+        // ── Dropdown positioning (portal) ────────────────────────────────
+        // The tag cells live inside .table-scroll (overflow-x: auto). An
+        // absolutely-positioned dropdown is a child of that box and gets
+        // clipped by it. Worse, .table-scroll uses -webkit-overflow-scrolling:
+        // touch, which on Safari turns an inner position:fixed element into a
+        // fixed child OF THE SCROLL CONTAINER — so even fixed positioning got
+        // re-anchored and clipped, and viewport coordinates landed at the
+        // wrong offset (scrolled over the selected tags).
+        //
+        // Fix: portal the dropdown node to <body> while open. No scroll or
+        // transformed ancestor exists there, so position:fixed + viewport
+        // coordinates work everywhere, including iOS Safari. Re-pin on
+        // scroll/resize while open, flip above the input when there's no
+        // room below, and move the node back into its field on close.
+        let openDropdown = null;
+        let openField = null;
+        function pinDropdown(field, dd, input) {
+            if (dd.parentNode !== document.body) {
+                document.body.appendChild(dd);
+            }
+            dd.style.position = 'fixed';
+            dd.style.zIndex = '1000';
+            dd.style.right = 'auto';
+            const r = input.getBoundingClientRect();
+            dd.style.left = r.left + 'px';
+            dd.style.width = r.width + 'px';
+            const gap = 4;
+            // Keep the open list inside the viewport (it can hang below the
+            // bottom tool even when the table itself has room to scroll).
+            dd.style.maxHeight = 'min(220px, calc(100vh - ' + (r.bottom + gap) + 'px - 8px))';
+            dd.style.bottom = 'auto';
+            dd.style.top = (r.bottom + gap) + 'px';
+            // Flip above the input when there isn't room below (bottom tool
+            // near the viewport edge).
+            const spaceBelow = window.innerHeight - r.bottom - gap;
+            if (spaceBelow < 120 && r.top > dd.offsetHeight + 8) {
+                dd.style.top = 'auto';
+                dd.style.bottom = (window.innerHeight - r.top + gap) + 'px';
+            }
+            openDropdown = dd;
+            openField = field;
+        }
+        function repositionOpen() {
+            if (!openDropdown || !openField) return;
+            const input = openField.querySelector('[data-tag-input]');
+            pinDropdown(openField, openDropdown, input);
+        }
+        window.addEventListener('scroll', repositionOpen, true);
+        window.addEventListener('resize', repositionOpen);
+        function hideDropdown(field) {
+            const dd = field ? (field._tagDropdown || field.querySelector('[data-tag-dropdown]')) : null;
+            if (dd) {
+                // Move it back into its field so field-scoped queries and the
+                // next open find it where expected.
+                if (dd.parentNode !== field) field.appendChild(dd);
+                dd.hidden = true;
+                dd.innerHTML = '';
+            }
+            if (openDropdown === dd || !dd) openDropdown = null;
+            if (openField === field || !field) openField = null;
+        }
+
+        function renderDropdown(field, filter) {
+            const input = field.querySelector('[data-tag-input]');
+            // Stable reference: the node is portaled to <body> while open, so
+            // field-scoped queries would miss it — resolve it once at bind.
+            const dd = field._tagDropdown;
+            const current = selectedTags(field);
+            const f = (filter || '').toLowerCase().trim();
+
+            // Suggested = known pool minus already-selected, filtered.
+            const options = POOL.filter(t =>
+                t.toLowerCase().includes(f) && !current.includes(t)
+            ).slice(0, 10);
+
+            // A typed-but-new tag is a candidate to create. Show it as an
+            // explicit "+ Add" option so new tags are discoverable, and add
+            // it to the shared pool the moment it's committed (Enter/click)
+            // so the other tools' autocomplete picks it up right away.
+            const typed = input.value.trim();
+            const canAdd = typed && !current.includes(typed) && !POOL.includes(typed);
+
+            if (options.length === 0 && !canAdd) {
+                hideDropdown(field);
+                return;
+            }
+
+            dd.hidden = false;
+            dd.innerHTML = '';
+
+            options.forEach(function (t) {
+                const div = document.createElement('div');
+                div.className = 'tag-option';
+                div.textContent = t;
+                div.addEventListener('mousedown', function (ev) {
+                    ev.preventDefault();
+                    commitTag(field, t);
+                });
+                dd.appendChild(div);
+            });
+
+            if (!canAdd) {
+                if (options.length === 0) {
+                    const div = document.createElement('div');
+                    div.className = 'tag-option empty';
+                    div.textContent = filter ? 'No matching tags' : 'No more tags';
+                    dd.appendChild(div);
+                }
+            } else {
+                const div = document.createElement('div');
+                div.className = 'tag-option new-tag';
+                div.textContent = '+ Add "' + typed + '"';
+                div.addEventListener('mousedown', function (ev) {
+                    ev.preventDefault();
+                    commitTag(field, typed);
+                });
+                dd.appendChild(div);
+            }
+
+            // Call last so the dropdown has its full height before we decide
+            // whether it fits below the input or must flip above.
+            pinDropdown(field, dd, input);
+        }
+        function commitTag(field, tag) {
+            // New tag → grow the shared pool immediately (available to other
+            // tools' autocomplete before this form is saved).
+            if (!POOL.includes(tag)) POOL.push(tag);
+            const sel = selectedTags(field);
+            if (!sel.includes(tag)) sel.push(tag);
+            setSelected(field, sel);
+            const input = field.querySelector('[data-tag-input]');
+            input.value = '';
+            renderDropdown(field, '');
+        }
+        function bindTagField(field) {
+            if (field.dataset.disabled !== undefined) return;
+            field._tagDropdown = field.querySelector('[data-tag-dropdown]');
+            const input = field.querySelector('[data-tag-input]');
+            const dd = field._tagDropdown;
+
+            input.addEventListener('focus', function () { renderDropdown(field, input.value); });
+            input.addEventListener('input', function () { renderDropdown(field, input.value); });
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    const val = input.value.trim();
+                    if (!val) return;
+                    commitTag(field, val);
+                } else if (e.key === 'Escape') {
+                    hideDropdown(field);
+                }
+            });
+
+            field.addEventListener('click', function (e) {
+                const x = e.target.closest('[data-remove-tag]');
+                if (!x) return;
+                const tag = x.closest('.tag-bubble').dataset.tag;
+                const sel = selectedTags(field).filter(t => t !== tag);
+                setSelected(field, sel);
+                renderDropdown(field, input.value);
+            });
+
+            document.addEventListener('click', function (e) {
+                if (!field.contains(e.target)) hideDropdown(field);
+            });
+        }
+
+        document.querySelectorAll('[data-tag-field]').forEach(bindTagField);
+    })();
+    </script>
+{% endblock %}

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Service;
 
+use function count;
+use function sprintf;
+
 /**
  * Maps between a structured schedule selection (the admin UI's schedule picker)
  * and a raw cron expression.
@@ -132,35 +135,41 @@ final class ScheduleCronService
 
         if (self::TYPE_CUSTOM === $type) {
             $cron = trim((string) ($data['schedule_cron'] ?? ''));
+
             return '' === $cron ? null : $cron;
         }
 
         if (self::TYPE_MINUTES === $type) {
             $n = max(1, min(60, (int) ($data['schedule_number'] ?? 5)));
+
             return sprintf('*/%d * * * *', $n);
         }
 
         if (self::TYPE_HOURS === $type) {
             $n = max(1, min(24, (int) ($data['schedule_number'] ?? 1)));
             $minute = max(0, min(59, (int) ($data['schedule_minute'] ?? 0)));
+
             return sprintf('%d */%d * * *', $minute, $n);
         }
 
         if (self::TYPE_DAYS === $type) {
             $hour = self::TIME_HOURS[(string) ($data['schedule_time'] ?? self::TIME_MORNING)] ?? 8;
             $dow = $this->daysToDow((string) ($data['schedule_days'] ?? self::DAYS_EVERYDAY));
+
             return sprintf('0 %d * * %s', $hour, $dow);
         }
 
         if (self::TYPE_WEEKS === $type) {
             $hour = self::TIME_HOURS[(string) ($data['schedule_time'] ?? self::TIME_MORNING)] ?? 8;
             $dayIndex = $this->weekdayToIndex((string) ($data['schedule_day'] ?? 'Monday'));
+
             return sprintf('0 %d * * %d', $hour, $dayIndex);
         }
 
         if (self::TYPE_MONTHS === $type) {
             $hour = self::TIME_HOURS[(string) ($data['schedule_time'] ?? self::TIME_MORNING)] ?? 8;
             $dom = max(1, min(28, (int) ($data['schedule_day'] ?? 1)));
+
             return sprintf('0 %d %d * *', $hour, $dom);
         }
 
@@ -212,6 +221,7 @@ final class ScheduleCronService
     private function weekdayToIndex(string $day): int
     {
         $i = array_search($day, self::WEEKDAYS, true);
+
         return false === $i ? 1 : $i;
     }
 }

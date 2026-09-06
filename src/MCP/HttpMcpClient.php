@@ -8,6 +8,7 @@ use App\Entity\McpServer;
 use App\Entity\ToolDef;
 
 use function is_array;
+use function is_string;
 
 use Psr\Log\LoggerInterface;
 use RuntimeException;
@@ -37,22 +38,70 @@ final class HttpMcpClient implements McpClientInterface
         return McpServer::TRANSPORT_HTTP === $server->getTransport();
     }
 
+    public function listTools(McpServer $server, array $env): array
+    {
+        $headers = $this->sessionHeaders($server, $env);
+        $payload = [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/list',
+            'params' => new \stdClass(),
+        ];
+
+        try {
+            $response = $this->httpClient->request('POST', $server->getEndpoint(), [
+                'headers' => $headers,
+                'json' => $payload,
+                'timeout' => 30,
+            ]);
+
+            $status = $response->getStatusCode();
+            $body = $response->getContent(false);
+
+            if ($status >= 400) {
+                throw new RuntimeException(sprintf('MCP server responded %d: %s', $status, $this->scrub($body)));
+            }
+
+            $result = $this->parseListResult($body);
+
+            $tools = [];
+            foreach ($result['tools'] ?? [] as $raw) {
+                if (!is_array($raw)) {
+                    continue;
+                }
+                $name = is_string($raw['name'] ?? null) ? $raw['name'] : '';
+                if ('' === $name) {
+                    continue;
+                }
+
+                // The MCP tools/list spec has no native tag concept; carry
+                // description + inputSchema through, tags stay empty (manual).
+                $schema = $raw['inputSchema'] ?? [];
+                $schema = is_array($schema) ? $schema : [];
+
+                $tools[] = new DiscoveredTool(
+                    name: $name,
+                    tags: [],
+                    schema: $schema,
+                    description: is_string($raw['description'] ?? null) ? $raw['description'] : null,
+                    raw: $raw,
+                );
+            }
+
+            return $tools;
+        } catch (Throwable $e) {
+            $this->logger->error('MCP tools/list failed', [
+                'server' => $server->getName(),
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
     public function call(McpServer $server, ToolDef $toolDef, array $arguments, array $env): ToolResult
     {
         try {
-            $headers = [
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json, text/event-stream',
-            ];
-
-            // Inject credentials from the environment (names in cred_vars).
-            foreach ($server->getCredVars() as $credVar) {
-                $value = $env[$credVar] ?? null;
-                if (null !== $value && '' !== $value) {
-                    $headers['Authorization'] ??= 'Bearer '.$value;
-                    // Other credential placement can be refined per server.
-                }
-            }
+            $headers = $this->sessionHeaders($server, $env);
 
             $payload = [
                 'jsonrpc' => '2.0',
@@ -94,6 +143,127 @@ final class HttpMcpClient implements McpClientInterface
 
             return ToolResult::failure(sprintf('MCP call error: %s', $e->getMessage()));
         }
+    }
+
+    /**
+     * Base headers plus the MCP session id obtained via the initialize
+     * handshake (required by the streamable HTTP transport).
+     *
+     * @return array<string, string>
+     */
+    private function sessionHeaders(McpServer $server, array $env): array
+    {
+        $headers = $this->baseHeaders($server, $env);
+        $sessionId = $this->initialize($server, $headers);
+        if (null !== $sessionId && '' !== $sessionId) {
+            $headers['Mcp-Session-Id'] = $sessionId;
+        }
+
+        return $headers;
+    }
+
+    /**
+     * Perform the MCP initialize handshake and return the session id the
+     * server assigned (null for stateless servers that omit it).
+     *
+     * Streamable-HTTP MCP servers (incl. mcp-server) require an initialize
+     * exchange before any other request; a bare tools/list is rejected with
+     * 400 "Missing session ID".
+     */
+    private function initialize(McpServer $server, array $headers): ?string
+    {
+        $payload = [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'initialize',
+            'params' => [
+                'protocolVersion' => '2025-03-26',
+                'capabilities' => new \stdClass(),
+                'clientInfo' => [
+                    'name' => 'taskweaver',
+                    'version' => '0.1.0',
+                ],
+            ],
+        ];
+
+        $response = $this->httpClient->request('POST', $server->getEndpoint(), [
+            'headers' => $headers,
+            'json' => $payload,
+            'timeout' => 30,
+        ]);
+
+        $status = $response->getStatusCode();
+        $body = $response->getContent(false);
+
+        if ($status >= 400) {
+            throw new RuntimeException(sprintf(
+                'MCP initialize failed: server responded %d: %s',
+                $status,
+                $this->scrub($body),
+            ));
+        }
+
+        // Fail loudly on an error frame so a broken handshake isn't masked.
+        $this->parseListResult($body);
+
+        $sessionIds = $response->getHeaders(false)['mcp-session-id'] ?? [];
+
+        return isset($sessionIds[0]) && is_string($sessionIds[0]) ? $sessionIds[0] : null;
+    }
+
+    /**
+     * @return array{Content-Type: string, Accept: string, Authorization?: string}
+     */
+    private function baseHeaders(McpServer $server, array $env): array
+    {
+        $headers = [
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json, text/event-stream',
+        ];
+
+        // Inject credentials from the environment (names in cred_vars).
+        foreach ($server->getCredVars() as $credVar) {
+            $value = $env[$credVar] ?? null;
+            if (null !== $value && '' !== $value) {
+                $headers['Authorization'] ??= 'Bearer '.$value;
+                // Other credential placement can be refined per server.
+            }
+        }
+
+        return $headers;
+    }
+
+    /**
+     * Parse a tools/list response. Handles both plain JSON and SSE frames.
+     *
+     * @return array<string, mixed>
+     */
+    private function parseListResult(string $body): array
+    {
+        if (str_contains($body, 'data:')) {
+            foreach (array_reverse(explode("\n", $body)) as $line) {
+                $line = trim($line);
+                if (!str_starts_with($line, 'data:')) {
+                    continue;
+                }
+                $json = json_decode(substr($line, 5), true);
+                if (is_array($json) && isset($json['result'])) {
+                    return $json['result'];
+                }
+            }
+        }
+
+        $json = json_decode($body, true);
+        if (is_array($json)) {
+            if (isset($json['result'])) {
+                return $json['result'];
+            }
+            if (isset($json['error'])) {
+                throw new RuntimeException((string) ($json['error']['message'] ?? 'unknown JSON-RPC error'));
+            }
+        }
+
+        throw new RuntimeException('Malformed tools/list response');
     }
 
     /**

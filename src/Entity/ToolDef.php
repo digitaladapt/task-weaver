@@ -8,6 +8,7 @@ use App\Repository\ToolDefRepository;
 
 use function count;
 
+use DateTimeImmutable;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Uid\Uuid;
@@ -46,6 +47,16 @@ class ToolDef
 
     #[ORM\Column(type: Types::TEXT, nullable: true)]
     private ?string $description = null;
+
+    /**
+     * When the tool stopped being defined on its MCP server. Null = live.
+     *
+     * A tool that disappears from the server's definition on a re-sync is
+     * flagged (removed_at set) rather than deleted, so manual tags and the
+     * audit trail are preserved. It no longer matches step tags / resolves.
+     */
+    #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?DateTimeImmutable $removedAt = null;
 
     public function __construct(string $name, array $tags = [], array $schema = [])
     {
@@ -128,5 +139,34 @@ class ToolDef
     public function matchesTags(array $stepTags): bool
     {
         return count(array_intersect($this->tags, $stepTags)) > 0;
+    }
+
+    /**
+     * Whether the tool is currently defined on its server (not flagged removed).
+     */
+    public function isRemoved(): bool
+    {
+        return null !== $this->removedAt;
+    }
+
+    public function getRemovedAt(): ?DateTimeImmutable
+    {
+        return $this->removedAt;
+    }
+
+    /**
+     * Flag the tool as no longer defined on its MCP server.
+     */
+    public function markRemoved(DateTimeImmutable $at): void
+    {
+        $this->removedAt = $at;
+    }
+
+    /**
+     * Clear the removed flag when the tool definition reappears on a re-sync.
+     */
+    public function restore(): void
+    {
+        $this->removedAt = null;
     }
 }
