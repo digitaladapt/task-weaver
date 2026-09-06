@@ -540,6 +540,59 @@
                 bubbles.appendChild(el);
             });
         }
+        // Task tags are consumers, not creators: a tag that doesn't exist on
+        // any tool would never match anything, so the picker is selection-
+        // only. Unknown typed text is left in the box (never committed).
+        // Matching is case-insensitive so "Weather" and "weather" both work.
+        function knownTagFor(typed) {
+            const t = typed.toLowerCase();
+            const exact = ALL_TAGS.find(x => x.toLowerCase() === t);
+            if (exact) return exact;
+            // A single unambiguous prefix match is a safe convenience — it
+            // still only ever resolves to an existing tag.
+            const matches = ALL_TAGS.filter(x => x.toLowerCase().startsWith(t));
+            return matches.length === 1 ? matches[0] : null;
+        }
+        // ── Dropdown positioning ──────────────────────────────────────────
+        // The step rows sit inside .panel/.step-editor-row and can be near the
+        // viewport edge. Pin the dropdown to the viewport (position: fixed)
+        // at the input's live coordinates, re-pinning on scroll/resize while
+        // it's open, and flip above the input when there isn't room below.
+        let openDropdown = null;
+        function pinDropdown(dd, input) {
+            dd.style.position = 'fixed';
+            const r = input.getBoundingClientRect();
+            dd.style.left = r.left + 'px';
+            dd.style.width = r.width + 'px';
+            const gap = 4;
+            dd.style.maxHeight = 'min(220px, calc(100vh - ' + (r.bottom + gap) + 'px - 8px))';
+            dd.style.bottom = 'auto';
+            dd.style.top = (r.bottom + gap) + 'px';
+            const spaceBelow = window.innerHeight - r.bottom - gap;
+            if (spaceBelow < 120 && r.top > dd.offsetHeight + 8) {
+                dd.style.top = 'auto';
+                dd.style.bottom = (window.innerHeight - r.top + gap) + 'px';
+            }
+            openDropdown = dd;
+        }
+        function repositionOpen() {
+            if (!openDropdown) return;
+            const field = openDropdown.closest('[data-tag-field]');
+            if (!field) return;
+            const input = field.querySelector('[data-tag-input]');
+            pinDropdown(openDropdown, input);
+        }
+        window.addEventListener('scroll', repositionOpen, true);
+        window.addEventListener('resize', repositionOpen);
+
+        function hideDropdown(field) {
+            const dd = field ? field.querySelector('[data-tag-dropdown]') : null;
+            if (dd) {
+                dd.hidden = true;
+                dd.innerHTML = '';
+            }
+            if (openDropdown === dd || !dd) openDropdown = null;
+        }
         function renderDropdown(field, filter) {
             const input = field.querySelector('[data-tag-input]');
             const dd = field.querySelector('[data-tag-dropdown]');
@@ -550,8 +603,7 @@
             ).slice(0, 12);
 
             if (options.length === 0 && !filter) {
-                dd.hidden = true;
-                dd.innerHTML = '';
+                hideDropdown(field);
                 return;
             }
             dd.hidden = false;
@@ -561,22 +613,25 @@
                 div.className = 'tag-option empty';
                 div.textContent = filter ? 'No matching tags' : 'No more tags';
                 dd.appendChild(div);
-                return;
-            }
-            options.forEach(function (t) {
-                const div = document.createElement('div');
-                div.className = 'tag-option';
-                div.textContent = t;
-                div.addEventListener('mousedown', function (ev) {
-                    ev.preventDefault(); // keep input focus
-                    const sel = selectedTags(field);
-                    if (!sel.includes(t)) sel.push(t);
-                    setSelected(field, sel);
-                    input.value = '';
-                    renderDropdown(field, '');
+            } else {
+                options.forEach(function (t) {
+                    const div = document.createElement('div');
+                    div.className = 'tag-option';
+                    div.textContent = t;
+                    div.addEventListener('mousedown', function (ev) {
+                        ev.preventDefault(); // keep input focus
+                        const sel = selectedTags(field);
+                        if (!sel.includes(t)) sel.push(t);
+                        setSelected(field, sel);
+                        input.value = '';
+                        renderDropdown(field, '');
+                    });
+                    dd.appendChild(div);
                 });
-                dd.appendChild(div);
-            });
+            }
+            // Call last so the dropdown has its full height before we decide
+            // whether it fits below the input or must flip above.
+            pinDropdown(dd, input);
         }
         function bindTagField(field) {
             const input = field.querySelector('[data-tag-input]');
@@ -589,14 +644,22 @@
                 if (e.key === 'Enter' || e.key === ',') {
                     e.preventDefault();
                     const val = input.value.trim();
-                    if (!val) return;
+                    // Only known tags may be committed — a task tag that no
+                    // tool carries would never resolve, so silently refusing
+                    // beats creating dead weight. A unique prefix match is
+                    // resolved to the real tag; anything else is left typed.
+                    const resolved = val ? knownTagFor(val) : null;
+                    if (!resolved) {
+                        renderDropdown(field, input.value); // re-shows "No matching tags"
+                        return;
+                    }
                     const sel = selectedTags(field);
-                    if (!sel.includes(val)) sel.push(val);
+                    if (!sel.includes(resolved)) sel.push(resolved);
                     setSelected(field, sel);
                     input.value = '';
                     renderDropdown(field, '');
                 } else if (e.key === 'Escape') {
-                    dd.hidden = true;
+                    hideDropdown(field);
                 }
             });
 
@@ -610,7 +673,7 @@
             });
 
             document.addEventListener('click', function (e) {
-                if (!field.contains(e.target)) dd.hidden = true;
+                if (!field.contains(e.target)) hideDropdown(field);
             });
             dd.addEventListener('mousedown', function (e) { e.preventDefault(); });
         }
