@@ -8,7 +8,9 @@
         <h1>{{ server.name }}</h1>
         <span class="spacer"></span>
         <a class="btn" href="{{ path('app_tool_server_edit', {id: server.id}) }}">Edit</a>
-        <a class="btn btn-primary" href="{{ path('app_tool_server_sync', {id: server.id}) }}" onclick="return confirm('Re-sync tool definitions from the server?\\n\\nExisting tools keep their manual tags; new tools are created; tools that vanished are flagged removed.');">Sync Now</a>
+        <form method="post" action="{{ path('app_tool_server_sync', {id: server.id}) }}" class="inline" onsubmit="return confirm('Re-sync tool definitions from the server?\\n\\nExisting tools keep their manual tags; new tools are created; tools that vanished are flagged removed.');">
+            <button type="submit" class="btn btn-primary">Sync Now</button>
+        </form>
     </div>
 
     <div class="panel">
@@ -87,6 +89,7 @@
 
 {% block stylesheets %}
     <style>
+        .inline { display: inline; }
         .row-removed td { opacity: .55; }
         .row-removed td { background: rgba(210,153,34,.04); }
     </style>
