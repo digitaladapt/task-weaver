@@ -107,6 +107,8 @@ The worker's LLM channel is **controller-directed** — the worker never decides
 
 Security model: the API key moves from "one per local network" to "one per provider, held centrally". The controller is the single place that holds credentials (already true for MCP servers); the LLM proxy extends that same trust boundary to model access. Provider keys are read at request time via `CredentialResolver` semantics (env → `$_ENV`/`$_SERVER`), never stored in the DB, never returned to the worker.
 
+**v2 direction (model types — not in v1 scope):** v1 exposes a single controller-wide provider/model. The planned direction is named **model types** (e.g. `fast`, `coder`, `abliterated`), each mapping to a concrete provider + model + params, with selection controllable at the **task** and **step** levels (a default type per task, overridable per step, resolved server-side at provision/fetch time). This is deliberately deferred; it layers cleanly on the proxy channel without changing the worker contract (the worker still just receives a resolved endpoint + model in its config).
+
 ## Architecture
 
 ```
@@ -423,6 +425,7 @@ When the worker marks a step `running`, the controller stamps `expires_at = now 
 - MCP server secrets live in **environment variables** on the TaskWeaver host/container.
 - `McpServer.cred_vars` records *which* env var names map to the server's auth (headers/tokens), never the values.
 - At call time, TaskWeaver reads the env var, injects it into the outbound MCP request, and returns only the tool result to the worker.
+- **LLM provider keys** (e.g. `TASKWEAVER_LLM_API_KEY`) follow the same rule: held only by the controller, read at request time, injected into the outbound LLM request, never persisted and never issued to workers (see § LLM channel).
 - DB-backed credential storage is deferred to v2.
 
 ### Secret containment
@@ -493,3 +496,12 @@ The step editor enforces the two valid shapes (single step, or all-parallel + on
 | 14 | Config source | **Environment variables** everywhere. `symfony/dotenv` is a **dev-only dependency**; production uses real env vars. |
 | 15 | Stale step expiry | **Lazy (option 1):** `Step.expires_at = now + step-timeout` at running; the selection query handles expiry (`queued OR running AND expires_at < now`); event keys gated by the same deadline. Periodic sweeper (option 2) deferred to next version. |
 | 16 | Worker on denial | A worker that gets a **401/403** on this step (tool call, status, or `complete`) **abandons the step immediately** — no retry, no LLM loop, no result report; it drops local state and moves to the next claim. Denial = the step's fate is already decided server-side. |
+| 17 | LLM auth / external LLMs | **Controller-mediated proxy.** When a provider key is configured, the worker's LLM traffic is proxied through TaskWeaver's `/api/worker/llm`; the worker never holds the key and never needs egress. Unauthenticated local LLMs stay direct. v1 is non-streaming (SSE in v2). |
+| 18 | LLM model selection | v1 = **one controller-wide provider/model**. Named **model types** (`fast`/`coder`/`abliterated`/…) selectable at task/step level is a **v2** direction (see § LLM channel). |
+
+## v2 Roadmap (intent, not scope)
+
+- **LLM model types** — named types (`fast`, `coder`, `abliterated`, …) → concrete provider/model/params; selectable at task and step level; resolved server-side. Deferred so v1 stays a single, clean provider channel.
+- **Streaming LLM proxy** (SSE) through `/api/worker/llm`.
+- DB-backed credential storage replacing v1's env-var-only approach.
+- Periodic stale-step sweeper (vs. v1's lazy expiry).
