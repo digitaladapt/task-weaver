@@ -15,6 +15,8 @@ parameters:
     env(TASKWEAVER_LLM_URL): 'http://llm:11434/v1'
     env(TASKWEAVER_LLM_MODEL): 'llama3.1'
     env(TASKWEAVER_SYSTEM_PROMPT_OVERRIDE): null
+    # Deployment-wide scheduling timezone; empty falls back to the system default.
+    env(TASKWEAVER_TIMEZONE): ''
 
 services:
     # default configuration for services in *this* file
@@ -57,3 +59,8 @@ services:
     App\Service\TaskWorkflowService:
         arguments:
             $stepTimeout: '%env(int:TASKWEAVER_STEP_TIMEOUT)%'
+
+    # Deployment-wide timezone (empty → system default).
+    App\Service\TimezoneService:
+        arguments:
+            $timezone: '%env(TASKWEAVER_TIMEZONE)%'

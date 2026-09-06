@@ -9,6 +9,7 @@ use App\Entity\Task;
 use App\Repository\TaskRepository;
 use App\Service\ScheduleCronService;
 use App\Service\TagService;
+use App\Service\TimezoneService;
 
 use function array_filter;
 use function array_keys;
@@ -52,6 +53,7 @@ final class TaskController extends AbstractController
         private readonly EntityManagerInterface $em,
         private readonly TagService $tags,
         private readonly ScheduleCronService $schedule,
+        private readonly TimezoneService $timezone,
     ) {
     }
 
@@ -173,10 +175,16 @@ final class TaskController extends AbstractController
     {
         $task->setName(trim((string) ($data['name'] ?? '')));
         $task->setDescription(trim((string) ($data['description'] ?? '')));
-        $task->setPriority(max(0, (int) ($data['priority'] ?? 0)));
+        // Priorities are signed: -999 (lowest) .. 999 (highest). The simple
+        // form has no validation, so clamp any out-of-range submission.
+        $priority = max(-999, min(999, (int) ($data['priority'] ?? 0)));
+        $task->setPriority($priority);
 
-        $tz = trim((string) ($data['timezone'] ?? ''));
-        $task->setTimezone('' !== $tz ? $tz : 'UTC');
+        // Timezone is deployment-wide (TASKWEAVER_TIMEZONE env, else system
+        // default); no per-task field. Stamp it so the scheduler stays
+        // timezone-aware. The task.timezone column stays for future
+        // multi-user support.
+        $task->setTimezone($this->timezone->resolve());
 
         // Schedule is now a structured selection; build the cron from it.
         $task->setSchedule($this->schedule->build($data));

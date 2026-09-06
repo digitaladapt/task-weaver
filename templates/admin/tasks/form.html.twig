@@ -80,16 +80,16 @@
 
                 <div class="schedule-options" data-schedule-options="minutes" {% if schedule.type != 'minutes' %}hidden{% endif %}>
                     <label for="task-schedule-number">Every</label>
-                    <input type="number" id="task-schedule-number" name="schedule_number" value="{{ schedule.number ?? 5 }}" min="1" max="60" class="input schedule-number">
+                    <input type="number" id="task-schedule-number" name="schedule_number" value="{{ schedule.number ?? 5 }}" min="1" max="60" inputmode="numeric" class="input schedule-number">
                     <span class="schedule-unit">minute(s)</span>
                 </div>
 
                 <div class="schedule-options" data-schedule-options="hours" {% if schedule.type != 'hours' %}hidden{% endif %}>
                     <label for="task-schedule-hours">Every</label>
-                    <input type="number" id="task-schedule-hours" name="schedule_number" value="{{ schedule.number ?? 1 }}" min="1" max="24" class="input schedule-number">
+                    <input type="number" id="task-schedule-hours" name="schedule_number" value="{{ schedule.number ?? 1 }}" min="1" max="24" inputmode="numeric" class="input schedule-number">
                     <span class="schedule-unit">hour(s)</span>
                     <label for="task-schedule-minute">at minute</label>
-                    <input type="number" id="task-schedule-minute" name="schedule_minute" value="{{ schedule.minute ?? 0 }}" min="0" max="59" class="input schedule-number">
+                    <input type="number" id="task-schedule-minute" name="schedule_minute" value="{{ schedule.minute ?? 0 }}" min="0" max="59" inputmode="numeric" class="input schedule-number">
                 </div>
 
                 <div class="schedule-options" data-schedule-options="days" {% if schedule.type != 'days' %}hidden{% endif %}>
@@ -150,11 +150,8 @@
             </div>
             <div class="field">
                 <label for="task-priority">Priority</label>
-                <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="0" step="1" class="input">
-            </div>
-            <div class="field">
-                <label for="task-timezone">Timezone</label>
-                <input type="text" id="task-timezone" name="timezone" value="{{ task.timezone }}" placeholder="UTC" class="input mono">
+                <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="-999" max="999" step="1" class="input">
+                <p class="muted field-note">Higher numbers are higher priority. Range: -999 to 999.</p>
             </div>
         </div>
 
@@ -322,7 +319,16 @@
             opacity: .7;
         }
         .tag-x:hover { opacity: 1; }
-        .tag-input { width: 100%; }
+        .tag-input {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .tag-input:focus { outline: none; border-color: var(--accent); }
         .tag-dropdown {
             position: absolute;
             top: 100%;
@@ -400,6 +406,54 @@
         const list = document.getElementById('step-list');
         const template = document.getElementById('step-row-template');
 
+        // ── Priority clamp ────────────────────────────────────────────────
+        // min/max only constrain the spinner and flag :invalid; they do NOT
+        // stop typing an out-of-range value (Safari especially). Enforce the
+        // range for real: snap on blur, and on submit in case focus is still
+        // in the field. The server clamps too, as a final backstop.
+        const priorityInput = document.getElementById('task-priority');
+        if (priorityInput) {
+            const minP = Number(priorityInput.min);
+            const maxP = Number(priorityInput.max);
+            priorityInput.addEventListener('blur', function () {
+                const raw = Number(priorityInput.value);
+                if (priorityInput.value === '' || Number.isNaN(raw)) return;
+                const clamped = Math.max(minP, Math.min(maxP, raw));
+                if (clamped !== raw) {
+                    priorityInput.value = String(clamped);
+                }
+            });
+            const form = priorityInput.closest('form');
+            if (form) {
+                form.addEventListener('submit', function () {
+                    const raw = Number(priorityInput.value);
+                    if (priorityInput.value === '' || Number.isNaN(raw)) return;
+                    priorityInput.value = String(Math.max(minP, Math.min(maxP, raw)));
+                });
+            }
+        }
+
+        // ── Schedule number clamp ──────────────────────────────────────────
+        // Same deal as priority: min/max on a number input don't stop you
+        // typing an out-of-range value. Snap to the range on blur, and again
+        // on submit in case focus is still in the field.
+        function clampNumber(input) {
+            return function () {
+                if (input.value === '' || Number.isNaN(Number(input.value))) return;
+                const min = Number(input.min);
+                const max = Number(input.max);
+                if (input.min === '' && input.max === '') return;
+                if (input.min !== '' && Number(input.value) < min) input.value = String(min);
+                if (input.max !== '' && Number(input.value) > max) input.value = String(max);
+            };
+        }
+        document.querySelectorAll('.schedule-options input[type="number"]').forEach(function (input) {
+            const fn = clampNumber(input);
+            input.addEventListener('blur', fn);
+            const form = input.closest('form');
+            if (form) form.addEventListener('submit', fn);
+        });
+
         // ── Schedule picker ────────────────────────────────────────────────
         const scheduleType = document.querySelector('[data-schedule-type]');
         const scheduleOptions = document.querySelectorAll('[data-schedule-options]');
@@ -407,6 +461,13 @@
             const t = scheduleType.value;
             scheduleOptions.forEach(function (el) {
                 el.hidden = el.dataset.scheduleOptions !== t;
+                // Disable hidden blocks so they don't submit duplicate-named
+                // fields that would override the visible block's value
+                // (PHP takes the last value for repeated names). The visible
+                // block is enabled on load below.
+                el.querySelectorAll('input, select, button').forEach(function (ctrl) {
+                    ctrl.disabled = el.hidden;
+                });
             });
             const hint = document.querySelector('.schedule-hint');
             if (hint) {
@@ -417,7 +478,11 @@
                         : 'The cron expression is generated from your selection.';
             }
         }
-        if (scheduleType) scheduleType.addEventListener('change', updateScheduleOptions);
+        if (scheduleType) {
+            // Initial state: enable only the block matching the current type.
+            updateScheduleOptions();
+            scheduleType.addEventListener('change', updateScheduleOptions);
+        }
 
         // ── Step add/remove ────────────────────────────────────────────────
         function addStep() {

@@ -29,6 +29,7 @@ final class SchedulerService
         private readonly EntityManagerInterface $em,
         private readonly TaskRepository $tasks,
         private readonly MessageBusInterface $bus,
+        private readonly TimezoneService $timezone,
     ) {
     }
 
@@ -67,9 +68,10 @@ final class SchedulerService
             ->getQuery()
             ->getResult();
 
-        return array_filter($candidates, static function (Task $task) use ($now): bool {
+        $tz = new DateTimeZone($this->timezone->resolve());
+
+        return array_filter($candidates, static function (Task $task) use ($now, $tz): bool {
             $cron = CronExpression::factory($task->getSchedule() ?? '');
-            $tz = new DateTimeZone($task->getTimezone());
 
             return $cron->isDue($now->setTimezone($tz));
         });
@@ -78,7 +80,7 @@ final class SchedulerService
     private function nextRunAt(Task $task, DateTimeImmutable $now): DateTimeImmutable
     {
         $cron = CronExpression::factory($task->getSchedule() ?? '');
-        $tz = new DateTimeZone($task->getTimezone());
+        $tz = new DateTimeZone($this->timezone->resolve());
         $next = $cron->getNextRunDate($now->setTimezone($tz));
 
         return DateTimeImmutable::createFromInterface($next);
