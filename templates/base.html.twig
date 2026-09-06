@@ -162,6 +162,7 @@
         .step-box.final { border-left-color: var(--accent); }
 
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .grid-2 > * { min-width: 0; } /* allow grid children to shrink below content so inner scroll works */
         @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
 
         .msg { padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
