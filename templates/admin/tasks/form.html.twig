@@ -553,14 +553,22 @@
             const matches = ALL_TAGS.filter(x => x.toLowerCase().startsWith(t));
             return matches.length === 1 ? matches[0] : null;
         }
-        // ── Dropdown positioning ──────────────────────────────────────────
+        // ── Dropdown positioning (portal) ────────────────────────────────
         // The step rows sit inside .panel/.step-editor-row and can be near the
-        // viewport edge. Pin the dropdown to the viewport (position: fixed)
-        // at the input's live coordinates, re-pinning on scroll/resize while
-        // it's open, and flip above the input when there isn't room below.
+        // viewport edge — and any scroll/transform ancestor traps position:
+        // fixed (Safari re-anchors it to the scrolling box). Portal the node
+        // to <body> while open, pin it to the input's live viewport
+        // coordinates, re-pin on scroll/resize, flip above when there's no
+        // room below, and move it back into its field on close.
         let openDropdown = null;
-        function pinDropdown(dd, input) {
+        let openField = null;
+        function pinDropdown(field, dd, input) {
+            if (dd.parentNode !== document.body) {
+                document.body.appendChild(dd);
+            }
             dd.style.position = 'fixed';
+            dd.style.zIndex = '1000';
+            dd.style.right = 'auto';
             const r = input.getBoundingClientRect();
             dd.style.left = r.left + 'px';
             dd.style.width = r.width + 'px';
@@ -574,28 +582,33 @@
                 dd.style.bottom = (window.innerHeight - r.top + gap) + 'px';
             }
             openDropdown = dd;
+            openField = field;
         }
         function repositionOpen() {
-            if (!openDropdown) return;
-            const field = openDropdown.closest('[data-tag-field]');
-            if (!field) return;
-            const input = field.querySelector('[data-tag-input]');
-            pinDropdown(openDropdown, input);
+            if (!openDropdown || !openField) return;
+            const input = openField.querySelector('[data-tag-input]');
+            pinDropdown(openField, openDropdown, input);
         }
         window.addEventListener('scroll', repositionOpen, true);
         window.addEventListener('resize', repositionOpen);
-
         function hideDropdown(field) {
-            const dd = field ? field.querySelector('[data-tag-dropdown]') : null;
+            const dd = field ? (field._tagDropdown || field.querySelector('[data-tag-dropdown]')) : null;
             if (dd) {
+                // Move it back into its field so field-scoped queries and the
+                // next open find it where expected.
+                if (dd.parentNode !== field) field.appendChild(dd);
                 dd.hidden = true;
                 dd.innerHTML = '';
             }
             if (openDropdown === dd || !dd) openDropdown = null;
+            if (openField === field || !field) openField = null;
         }
         function renderDropdown(field, filter) {
             const input = field.querySelector('[data-tag-input]');
-            const dd = field.querySelector('[data-tag-dropdown]');
+            // Stable reference: the node is portaled to <body> while open, so
+            // field-scoped queries would miss it — resolve it once at bind.
+            const dd = field._tagDropdown;
+
             const current = selectedTags(field);
             const f = (filter || '').toLowerCase();
             const options = ALL_TAGS.filter(t =>
@@ -631,11 +644,12 @@
             }
             // Call last so the dropdown has its full height before we decide
             // whether it fits below the input or must flip above.
-            pinDropdown(dd, input);
+            pinDropdown(field, dd, input);
         }
         function bindTagField(field) {
+            field._tagDropdown = field.querySelector('[data-tag-dropdown]');
             const input = field.querySelector('[data-tag-input]');
-            const dd = field.querySelector('[data-tag-dropdown]');
+            const dd = field._tagDropdown;
 
             input.addEventListener('focus', function () { renderDropdown(field, input.value); });
             input.addEventListener('input', function () { renderDropdown(field, input.value); });

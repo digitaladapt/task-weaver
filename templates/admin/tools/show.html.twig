@@ -206,16 +206,29 @@
                 bubbles.appendChild(el);
             });
         }
-        // ── Dropdown positioning ──────────────────────────────────────────
-        // The tag cells live inside .table-scroll, which scrolls horizontally
-        // (overflow-x: auto). An absolutely-positioned dropdown is a child of
-        // that box and gets clipped by it — the container doesn't grow, so on
-        // the bottom tool the choices were cut off and unscrollable. Fix:
-        // pin the dropdown to the viewport (position: fixed) at the input's
-        // live coordinates, and re-pin on scroll/resize while it's open.
+        // ── Dropdown positioning (portal) ────────────────────────────────
+        // The tag cells live inside .table-scroll (overflow-x: auto). An
+        // absolutely-positioned dropdown is a child of that box and gets
+        // clipped by it. Worse, .table-scroll uses -webkit-overflow-scrolling:
+        // touch, which on Safari turns an inner position:fixed element into a
+        // fixed child OF THE SCROLL CONTAINER — so even fixed positioning got
+        // re-anchored and clipped, and viewport coordinates landed at the
+        // wrong offset (scrolled over the selected tags).
+        //
+        // Fix: portal the dropdown node to <body> while open. No scroll or
+        // transformed ancestor exists there, so position:fixed + viewport
+        // coordinates work everywhere, including iOS Safari. Re-pin on
+        // scroll/resize while open, flip above the input when there's no
+        // room below, and move the node back into its field on close.
         let openDropdown = null;
-        function pinDropdown(dd, input) {
+        let openField = null;
+        function pinDropdown(field, dd, input) {
+            if (dd.parentNode !== document.body) {
+                document.body.appendChild(dd);
+            }
             dd.style.position = 'fixed';
+            dd.style.zIndex = '1000';
+            dd.style.right = 'auto';
             const r = input.getBoundingClientRect();
             dd.style.left = r.left + 'px';
             dd.style.width = r.width + 'px';
@@ -233,20 +246,33 @@
                 dd.style.bottom = (window.innerHeight - r.top + gap) + 'px';
             }
             openDropdown = dd;
+            openField = field;
         }
         function repositionOpen() {
-            if (!openDropdown) return;
-            const field = openDropdown.closest('[data-tag-field]');
-            if (!field) return;
-            const input = field.querySelector('[data-tag-input]');
-            pinDropdown(openDropdown, input);
+            if (!openDropdown || !openField) return;
+            const input = openField.querySelector('[data-tag-input]');
+            pinDropdown(openField, openDropdown, input);
         }
         window.addEventListener('scroll', repositionOpen, true);
         window.addEventListener('resize', repositionOpen);
+        function hideDropdown(field) {
+            const dd = field ? (field._tagDropdown || field.querySelector('[data-tag-dropdown]')) : null;
+            if (dd) {
+                // Move it back into its field so field-scoped queries and the
+                // next open find it where expected.
+                if (dd.parentNode !== field) field.appendChild(dd);
+                dd.hidden = true;
+                dd.innerHTML = '';
+            }
+            if (openDropdown === dd || !dd) openDropdown = null;
+            if (openField === field || !field) openField = null;
+        }
 
         function renderDropdown(field, filter) {
             const input = field.querySelector('[data-tag-input]');
-            const dd = field.querySelector('[data-tag-dropdown]');
+            // Stable reference: the node is portaled to <body> while open, so
+            // field-scoped queries would miss it — resolve it once at bind.
+            const dd = field._tagDropdown;
             const current = selectedTags(field);
             const f = (filter || '').toLowerCase().trim();
 
@@ -301,15 +327,7 @@
 
             // Call last so the dropdown has its full height before we decide
             // whether it fits below the input or must flip above.
-            pinDropdown(dd, input);
-        }
-        function hideDropdown(field) {
-            const dd = field ? field.querySelector('[data-tag-dropdown]') : null;
-            if (dd) {
-                dd.hidden = true;
-                dd.innerHTML = '';
-            }
-            if (openDropdown === dd || !dd) openDropdown = null;
+            pinDropdown(field, dd, input);
         }
         function commitTag(field, tag) {
             // New tag → grow the shared pool immediately (available to other
@@ -324,8 +342,9 @@
         }
         function bindTagField(field) {
             if (field.dataset.disabled !== undefined) return;
+            field._tagDropdown = field.querySelector('[data-tag-dropdown]');
             const input = field.querySelector('[data-tag-input]');
-            const dd = field.querySelector('[data-tag-dropdown]');
+            const dd = field._tagDropdown;
 
             input.addEventListener('focus', function () { renderDropdown(field, input.value); });
             input.addEventListener('input', function () { renderDropdown(field, input.value); });
