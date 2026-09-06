@@ -8,6 +8,7 @@ use App\Entity\Step;
 use App\Entity\Task;
 use App\Repository\TaskRepository;
 use App\Service\ScheduleCronService;
+use App\Service\SchedulerService;
 use App\Service\TagService;
 use App\Service\TimezoneService;
 
@@ -54,6 +55,7 @@ final class TaskController extends AbstractController
         private readonly TagService $tags,
         private readonly ScheduleCronService $schedule,
         private readonly TimezoneService $timezone,
+        private readonly SchedulerService $scheduler,
     ) {
     }
 
@@ -188,6 +190,14 @@ final class TaskController extends AbstractController
 
         // Schedule is now a structured selection; build the cron from it.
         $task->setSchedule($this->schedule->build($data));
+
+        // A scheduled task always exposes a concrete "Next Run" — compute it
+        // now (from the cron) so enabling a schedule shows immediately instead
+        // of staying blank until the next scheduler tick. One-shot tasks keep
+        // a nil next run (they run on demand via /tasks/{id}/run).
+        if (null !== $task->getSchedule()) {
+            $task->setNextRunAt($this->scheduler->nextRunAt($task, new \DateTimeImmutable()));
+        }
 
         $raw = $data['steps'] ?? [];
         $names = is_array($raw['name'] ?? null) ? $raw['name'] : [];

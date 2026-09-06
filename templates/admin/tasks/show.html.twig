@@ -14,6 +14,7 @@
         <span class="muted">created {{ task.createdAt|date('Y-m-d H:i') }}</span>
         {% if task.priority %}<span class="badge">priority {{ task.priority }}</span>{% endif %}
         {% if task.schedule %}<span class="badge mono">{{ task.schedule }}</span>{% endif %}
+        {% if task.nextRunAt %}<span class="badge">next run {{ task.nextRunAt|date('Y-m-d H:i') }}</span>{% endif %}
     </p>
 
     <div class="panel">

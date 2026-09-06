@@ -11,6 +11,5 @@ framework:
             failed: 'doctrine://default?queue_name=failed'
 
         routing:
-            # Messages for the task scheduler.
-            'App\Message\SchedulerTick': async
+            # Task-due notifications (logged by TaskDueHandler).
             'App\Message\TaskDueMessage': async

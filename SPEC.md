@@ -427,11 +427,14 @@ When the worker marks a step `running`, the controller stamps `expires_at = now 
 ## Scheduling
 
 - Cron expression in `Task.schedule` (via `dragonmantank/cron-expression`), timezone-aware.
-- A Messenger consumer runs every minute:
+- A cron entry runs the scheduler tick **every minute** — it marks due recurring tasks `ready` (enqueue for claim) and advances `next_run_at`:
   ```cron
-  * * * * * cd /path/to/taskweaver && bin/console messenger:consume default --memory-limit=10M
+  * * * * * cd /path/to/taskweaver && bin/console app:scheduler:tick
   ```
-- Due tasks → `ready` (enqueue for claim) and `next_run_at` recalculated for recurring tasks.
+- **Save-time cursor:** enabling a schedule in the task editor computes `next_run_at` immediately (`SchedulerService::nextRunAt`), so the admin UI shows a concrete "Next Run" the moment you save — it doesn't wait for the next cron tick.
+- **Outage / delayed tick catch-up:** the due check is cursor-based (`next_run_at <= now`), not exact-minute cron matching. If the tick is late (brief outage at 08:00, tick runs 08:14), a slot that never ran is still fired rather than skipped to the next occurrence.
+- **Recurring tasks stay scheduled across runs:** completing or failing the final step of a recurring task advances `next_run_at` to the next occurrence (it stays on schedule and is picked up again); only a one-shot task (`schedule = null`) clears the cursor on completion.
+- **Fresh run each occurrence:** when the tick promotes a recurring task back to `ready`, its steps are reset to `pending` (started/finished/expiry timestamps and results cleared), so a task that previously completed or failed runs again from step one rather than being stuck on already-terminal steps.
 - One-shot tasks (`schedule = null`) stay `draft` until triggered via `/tasks/{id}/run`.
 
 ## Credentials (v1)

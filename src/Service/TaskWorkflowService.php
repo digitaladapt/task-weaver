@@ -32,6 +32,7 @@ final class TaskWorkflowService
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly LoggerInterface $logger,
+        private readonly SchedulerService $scheduler,
         private readonly int $stepTimeout = 600,
     ) {
     }
@@ -103,7 +104,11 @@ final class TaskWorkflowService
 
         if ($step->isFinal()) {
             $task->setStatus(Task::STATUS_COMPLETED);
-            $task->setNextRunAt(null);
+            // A recurring task stays scheduled: advance the cursor to the
+            // next occurrence so the next run is picked up by a worker and a
+            // visible "Next Run" is always shown. A one-shot task is done —
+            // clear the cursor (it never runs on its own again).
+            $this->applyScheduleCursor($task, Task::STATUS_COMPLETED);
             $task->touch();
             $this->em->persist($task);
             $this->logger->info('Task completed', ['task' => $task->getId()->toRfc4122()]);
@@ -114,6 +119,26 @@ final class TaskWorkflowService
         }
 
         $this->em->flush();
+    }
+
+    /**
+     * After a final step finishes (completed or failed), keep a recurring task
+     * on its schedule by advancing next_run_at to the next occurrence, or
+     * clear it for a one-shot task.
+     */
+    private function applyScheduleCursor(Task $task, string $endStatus): void
+    {
+        if (null === $task->getSchedule()) {
+            $task->setNextRunAt(null);
+
+            return;
+        }
+
+        // Recurring: next run is the next cron occurrence after now. The
+        // scheduler will promote the task back to ready when that time is due.
+        $task->setNextRunAt(
+            $this->scheduler->nextRunAt($task, new DateTimeImmutable())
+        );
     }
 
     /**
@@ -157,6 +182,9 @@ final class TaskWorkflowService
 
         if ($step->isFinal()) {
             $task->setStatus(Task::STATUS_FAILED);
+            // Same scheduling rule as completion: a recurring task keeps its
+            // next run so the outage/failure doesn't permanently stall it.
+            $this->applyScheduleCursor($task, Task::STATUS_FAILED);
             $task->touch();
             $this->em->persist($task);
         } else {
