@@ -152,10 +152,6 @@
                 <label for="task-priority">Priority</label>
                 <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="0" step="1" class="input">
             </div>
-            <div class="field">
-                <label for="task-timezone">Timezone</label>
-                <input type="text" id="task-timezone" name="timezone" value="{{ task.timezone }}" placeholder="UTC" class="input mono">
-            </div>
         </div>
 
         <div class="panel steps-panel">
@@ -322,7 +318,16 @@
             opacity: .7;
         }
         .tag-x:hover { opacity: 1; }
-        .tag-input { width: 100%; }
+        .tag-input {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .tag-input:focus { outline: none; border-color: var(--accent); }
         .tag-dropdown {
             position: absolute;
             top: 100%;

@@ -87,6 +87,7 @@ All tunable settings — timeouts (including the step timeout), context limits, 
 | `TASKWEAVER_LLM_API_KEY` | *(none)* | API key for the LLM provider (e.g. OpenAI/Anthropic key). Held **only by the controller** (read at request time, never persisted, never issued to workers). When set, the worker's LLM traffic is proxied through TaskWeaver. |
 | `TASKWEAVER_ENROLLMENT_TOKEN` | `dev-enrollment-token` | One-time token workers present at provision time (Tier-0). |
 | `TASKWEAVER_SYSTEM_PROMPT_OVERRIDE` | *(none)* | Optional system-prompt override issued to workers via provision `config` (`system_prompt_override`). |
+| `TASKWEAVER_TIMEZONE` | *(system default)* | Deployment-wide timezone used by the scheduler (e.g. `America/New_York`). When unset, falls back to PHP's `date_default_timezone_get()` (the system timezone). v1 is single-tenant — there is no per-task timezone UI control; each task is stamped with this value at creation for future multi-user support. |
 
 ### LLM channel: direct vs. proxied
 
@@ -169,7 +170,7 @@ Security model: the API key moves from "one per local network" to "one per provi
 | `name` | string(255) | Human-readable name |
 | `description` | text | Task brief / goal for the LLM |
 | `schedule` | string/null | Cron expression (`* * * * *`) or null for one-shot |
-| `timezone` | string | Default `UTC` |
+| `timezone` | string | Stamp of the deployment-wide timezone at creation — see `TASKWEAVER_TIMEZONE`. Kept for future multi-user support; not edited in the UI. |
 | `status` | enum | `draft`, `ready`, `running`, `paused`, `completed`, `failed` |
 | `priority` | integer | Higher = claimed first (default 0) |
 | `created_at` / `updated_at` | datetime | |
