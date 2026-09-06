@@ -175,7 +175,10 @@ final class TaskController extends AbstractController
     {
         $task->setName(trim((string) ($data['name'] ?? '')));
         $task->setDescription(trim((string) ($data['description'] ?? '')));
-        $task->setPriority(max(0, (int) ($data['priority'] ?? 0)));
+        // Priorities are signed: -999 (lowest) .. 999 (highest). The simple
+        // form has no validation, so clamp any out-of-range submission.
+        $priority = max(-999, min(999, (int) ($data['priority'] ?? 0)));
+        $task->setPriority($priority);
 
         // Timezone is deployment-wide (TASKWEAVER_TIMEZONE env, else system
         // default); no per-task field. Stamp it so the scheduler stays
