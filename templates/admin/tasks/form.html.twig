@@ -80,16 +80,16 @@
 
                 <div class="schedule-options" data-schedule-options="minutes" {% if schedule.type != 'minutes' %}hidden{% endif %}>
                     <label for="task-schedule-number">Every</label>
-                    <input type="number" id="task-schedule-number" name="schedule_number" value="{{ schedule.number ?? 5 }}" min="1" max="60" class="input schedule-number">
+                    <input type="number" id="task-schedule-number" name="schedule_number" value="{{ schedule.number ?? 5 }}" min="1" max="60" inputmode="numeric" class="input schedule-number">
                     <span class="schedule-unit">minute(s)</span>
                 </div>
 
                 <div class="schedule-options" data-schedule-options="hours" {% if schedule.type != 'hours' %}hidden{% endif %}>
                     <label for="task-schedule-hours">Every</label>
-                    <input type="number" id="task-schedule-hours" name="schedule_number" value="{{ schedule.number ?? 1 }}" min="1" max="24" class="input schedule-number">
+                    <input type="number" id="task-schedule-hours" name="schedule_number" value="{{ schedule.number ?? 1 }}" min="1" max="24" inputmode="numeric" class="input schedule-number">
                     <span class="schedule-unit">hour(s)</span>
                     <label for="task-schedule-minute">at minute</label>
-                    <input type="number" id="task-schedule-minute" name="schedule_minute" value="{{ schedule.minute ?? 0 }}" min="0" max="59" class="input schedule-number">
+                    <input type="number" id="task-schedule-minute" name="schedule_minute" value="{{ schedule.minute ?? 0 }}" min="0" max="59" inputmode="numeric" class="input schedule-number">
                 </div>
 
                 <div class="schedule-options" data-schedule-options="days" {% if schedule.type != 'days' %}hidden{% endif %}>
@@ -150,7 +150,7 @@
             </div>
             <div class="field">
                 <label for="task-priority">Priority</label>
-                <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="-999" max="999" step="1" inputmode="numeric" class="input">
+                <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="-999" max="999" step="1" class="input">
                 <p class="muted field-note">Higher numbers are higher priority. Range: -999 to 999.</p>
             </div>
         </div>
