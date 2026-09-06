@@ -21,8 +21,11 @@ holds no secrets, and forwards every *external* tool call to TaskWeaver.
 >   ephemeral worker key + config). Matching is **server-assigned**; the worker
 >   never self-declares capabilities at claim time.
 > - The **LLM channel is explicit**: the local LLM on the private Docker
->   network is a trusted channel. The controller sits on that same network and
->   has a second NIC for the public admin UI.
+>   network is a trusted channel (direct, no key). For **keyed/external LLMs**
+>   the worker's LLM traffic is proxied through the controller's
+>   `/api/worker/llm` route — the controller holds the provider key, the worker
+>   never does. The controller sits on that same network and has a second NIC
+>   for the public admin UI.
 > - Stale-step handling is **lazy expiry**: the controller stamps
 >   `expires_at` when the step goes `running`; tool calls and late worker
 >   responses past the deadline are rejected as unauthorized (401). No
@@ -37,17 +40,19 @@ holds no secrets, and forwards every *external* tool call to TaskWeaver.
 ## 0. The two pieces
 
 ```
-┌──────────────────────┐   REST (provision/claim/events/tool calls)   ┌────────────────────────┐
-│  TaskWeaver           │◄───────────────────────────────────────────►│  LLM Worker (Docker)   │
-│  (controller)         │     sandboxed: no internet, no secrets      │  PHP 8.4 + Symfony      │
-│                       │                                             │  sandboxed · unprivileged│
-│  scheduler            │                                             └───────────┬────────────┘
-│  tool proxy           │                                                         │  OpenAI-compat HTTP
-│  credentials/env      │                                                         ▼
-│  event log            │                                            ┌────────────────────────┐
-└───────────┬──────────┘                                            │  local LLM (Ollama /   │
-            │  external tools via MCP (openapi / streamable-http)   │  vLLM / llama.cpp …)    │
-┌───────────▼──────────┐  ─────── private Docker network ─────────  └────────────────────────┘
+┌──────────────────────┐   REST (provision/claim/events/tool calls/LLM proxy) ┌────────────────────────┐
+│  TaskWeaver           │◄───────────────────────────────────────────────────►│  LLM Worker (Docker)   │
+│  (controller)         │     sandboxed: no internet, no secrets              │  PHP 8.4 + Symfony      │
+│                       │                                                     │  sandboxed · unprivileged│
+│  scheduler            │          direct LLM (no key) ───────────────┐       └───────────┬────────────┘
+│  tool proxy           │          keyed LLM via /api/worker/llm ──┐  │                   │  OpenAI-compat HTTP
+│  credentials/env      │                                           ▼  ▼                   ▼
+│  event log            │                            ┌──────────────────────────┐
+│  LLM proxy (keyed)    │                            │  local LLM (Ollama /      │
+└───────────┬──────────┘    ┌─────────────┐          │  vLLM / llama.cpp …)      │
+            │  external     │ External LLM │◄────────│  OR keyed external LLM     │
+            │  tools via    │ (OpenAI/...) │  proxy  │  (via controller, holds key)│
+┌───────────▼──────────┐    └─────────────┘          └──────────────────────────┘
 │ MCP Server(s)        │     worker ─┐   controller ─┐   LLM ─┐
 │ (registered)         │             └───────────────┴───────┘
 └──────────────────────┘    controller also has a SECOND NIC → public admin UI
@@ -118,7 +123,8 @@ boundary**, and "no internet, no secrets" is a hard requirement, not a wish.
 |---|---|---|
 | TaskWeaver (controller) | tool proxying, credentials, event log, key minting/revocation | — |
 | Worker | its own sandbox + internal tools, the LLM loop | secrets, internet/egress, external tools, arbitrary host access |
-| Local LLM (private network) | model inference only | tools, credentials, secrets routing; it never receives secrets |
+| Local LLM (private network) | model inference only (direct channel, no key) | tools, credentials, secrets routing; it never receives secrets |
+| External / keyed LLM | model inference only (proxied channel through controller) | reaching the worker; the provider key stays on the controller |
 | MCP servers | the specific tool they expose | seeing worker state, trusting workers directly |
 
 ### The network is the enforcement
@@ -369,6 +375,7 @@ durable history is TaskWeaver's event + ToolCall records.
 | POST | `/api/worker/event/{taskId}/{stepId}` | worker key | Register an event → `{ event_id, api_key }` |
 | POST | `/api/worker/tool/{taskId}/{eventId}` | **event key** | Forward an external tool call; TaskWeaver validates + executes + records |
 | POST | `/api/worker/tool/internal` | worker key | Log a worker-executed internal tool call |
+| POST | `/api/worker/llm` | worker key | Proxy an LLM chat-completions payload to the keyed/external LLM; only issued when the provider needs a key |
 | PATCH | `/api/worker/step/{taskId}/{stepId}/status` | worker key | `running` / `failed` transitions |
 | POST | `/api/worker/step/{taskId}/{stepId}/complete` | worker key | Submit step result; **revokes every event key for that step**; resolves the shape |
 
@@ -389,7 +396,12 @@ durable history is TaskWeaver's event + ToolCall records.
   "tags": ["terminal"],
   "internal_tools": ["memory.search", "memory.store"],
   "config": {
+    // No key configured → direct local LLM (worker talks to llm_url itself)
     "llm_url": "http://llm:11434/v1",      // TASKWEAVER_LLM_URL, controller env var
+    "llm_auth": null,
+    // Provider key configured (TASKWEAVER_LLM_API_KEY) → proxied channel:
+    //   "llm_url": "http://controller:8080/api/worker/llm",
+    //   "llm_auth": { "type": "proxy", "provider": "openai" },
     "llm_model": "llama3.1",               // TASKWEAVER_LLM_MODEL, controller env var
     "system_prompt_override": null,
     "step_timeout": 600   // TASKWEAVER_STEP_TIMEOUT, controller env var
@@ -498,12 +510,22 @@ timed-out call could otherwise double-send. The worker includes an
                 │          └────────────────┬───────────────┘
                 │                           │ only egress on the private net
                 │          ┌────────────────▼───────────────┐
-                └─────────►│  local LLM (Ollama/vLLM/…)     │
+                └─────────►│  local LLM (Ollama/vLLM/…)     │   direct channel (no key)
                            └────────────────────────────────┘
+
+   keyed/external LLM (OpenAI etc.): worker ──► controller /api/worker/llm ──► provider
+   (the worker only ever talks to the controller; the controller holds the provider key)
 ```
 
 - The **worker and the LLM are on the same private Docker network** — that
-  private network is the worker's one trusted channel besides TaskWeaver.
+  private network is the worker's one trusted channel besides TaskWeaver. For
+  an **unauthenticated** local LLM that is the whole story: the worker talks
+  to it directly.
+- For a **keyed/external LLM**, the worker never talks to it. The worker
+  sends its chat payloads to the controller's `/api/worker/llm` proxy (its
+  worker key authenticates), and the controller forwards to the provider with
+  the provider key it holds. The worker still has **no route to the internet**
+  and still holds **no secrets**.
 - The **controller is also on that private network**, and has a **second
   network interface** exposing only the web admin UI publicly.
 - The worker has **no route to the internet**, ever.
@@ -554,7 +576,7 @@ worker:
   volumes: [worker-workspace:/work/ws]     # persisted per-task workspace
 ```
 
-(The LLM endpoint comes from controller-issued config, not a baked-in secret.)
+(The LLM endpoint comes from controller-issued config, not a baked-in secret. When a provider key is configured, `config.llm_url` points at the controller's `/api/worker/llm` proxy instead — the worker's compose file doesn't change, and no secret is added to the worker environment.)
 
 ### Spawn strategy
 
