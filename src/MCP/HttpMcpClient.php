@@ -40,12 +40,12 @@ final class HttpMcpClient implements McpClientInterface
 
     public function listTools(McpServer $server, array $env): array
     {
-        $headers = $this->baseHeaders($server, $env);
+        $headers = $this->sessionHeaders($server, $env);
         $payload = [
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'tools/list',
-            'params' => [],
+            'params' => new \stdClass(),
         ];
 
         try {
@@ -101,7 +101,7 @@ final class HttpMcpClient implements McpClientInterface
     public function call(McpServer $server, ToolDef $toolDef, array $arguments, array $env): ToolResult
     {
         try {
-            $headers = $this->baseHeaders($server, $env);
+            $headers = $this->sessionHeaders($server, $env);
 
             $payload = [
                 'jsonrpc' => '2.0',
@@ -143,6 +143,72 @@ final class HttpMcpClient implements McpClientInterface
 
             return ToolResult::failure(sprintf('MCP call error: %s', $e->getMessage()));
         }
+    }
+
+    /**
+     * Base headers plus the MCP session id obtained via the initialize
+     * handshake (required by the streamable HTTP transport).
+     *
+     * @return array<string, string>
+     */
+    private function sessionHeaders(McpServer $server, array $env): array
+    {
+        $headers = $this->baseHeaders($server, $env);
+        $sessionId = $this->initialize($server, $headers);
+        if (null !== $sessionId && '' !== $sessionId) {
+            $headers['Mcp-Session-Id'] = $sessionId;
+        }
+
+        return $headers;
+    }
+
+    /**
+     * Perform the MCP initialize handshake and return the session id the
+     * server assigned (null for stateless servers that omit it).
+     *
+     * Streamable-HTTP MCP servers (incl. mcp-server) require an initialize
+     * exchange before any other request; a bare tools/list is rejected with
+     * 400 "Missing session ID".
+     */
+    private function initialize(McpServer $server, array $headers): ?string
+    {
+        $payload = [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'initialize',
+            'params' => [
+                'protocolVersion' => '2025-03-26',
+                'capabilities' => new \stdClass(),
+                'clientInfo' => [
+                    'name' => 'taskweaver',
+                    'version' => '0.1.0',
+                ],
+            ],
+        ];
+
+        $response = $this->httpClient->request('POST', $server->getEndpoint(), [
+            'headers' => $headers,
+            'json' => $payload,
+            'timeout' => 30,
+        ]);
+
+        $status = $response->getStatusCode();
+        $body = $response->getContent(false);
+
+        if ($status >= 400) {
+            throw new RuntimeException(sprintf(
+                'MCP initialize failed: server responded %d: %s',
+                $status,
+                $this->scrub($body),
+            ));
+        }
+
+        // Fail loudly on an error frame so a broken handshake isn't masked.
+        $this->parseListResult($body);
+
+        $sessionIds = $response->getHeaders(false)['mcp-session-id'] ?? [];
+
+        return isset($sessionIds[0]) && is_string($sessionIds[0]) ? $sessionIds[0] : null;
     }
 
     /**
