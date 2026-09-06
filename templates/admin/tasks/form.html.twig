@@ -406,6 +406,33 @@
         const list = document.getElementById('step-list');
         const template = document.getElementById('step-row-template');
 
+        // ── Priority clamp ────────────────────────────────────────────────
+        // min/max only constrain the spinner and flag :invalid; they do NOT
+        // stop typing an out-of-range value (Safari especially). Enforce the
+        // range for real: snap on blur, and on submit in case focus is still
+        // in the field. The server clamps too, as a final backstop.
+        const priorityInput = document.getElementById('task-priority');
+        if (priorityInput) {
+            const minP = Number(priorityInput.min);
+            const maxP = Number(priorityInput.max);
+            priorityInput.addEventListener('blur', function () {
+                const raw = Number(priorityInput.value);
+                if (priorityInput.value === '' || Number.isNaN(raw)) return;
+                const clamped = Math.max(minP, Math.min(maxP, raw));
+                if (clamped !== raw) {
+                    priorityInput.value = String(clamped);
+                }
+            });
+            const form = priorityInput.closest('form');
+            if (form) {
+                form.addEventListener('submit', function () {
+                    const raw = Number(priorityInput.value);
+                    if (priorityInput.value === '' || Number.isNaN(raw)) return;
+                    priorityInput.value = String(Math.max(minP, Math.min(maxP, raw)));
+                });
+            }
+        }
+
         // ── Schedule picker ────────────────────────────────────────────────
         const scheduleType = document.querySelector('[data-schedule-type]');
         const scheduleOptions = document.querySelectorAll('[data-schedule-options]');
