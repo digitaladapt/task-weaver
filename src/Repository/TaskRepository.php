@@ -19,8 +19,8 @@ class TaskRepository extends ServiceEntityRepository
     }
 
     /**
-     * Find tasks that are due to run: status `ready`, ordered by priority
-     * (higher first) then creation time.
+     * Find tasks that are due to run: status `ready`, not soft-deleted, ordered
+     * by priority (higher first) then creation time.
      *
      * @return Task[]
      */
@@ -28,9 +28,51 @@ class TaskRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('t')
             ->where('t.status = :ready')
+            ->andWhere('t.deletedAt IS NULL')
             ->setParameter('ready', Task::STATUS_READY)
             ->orderBy('t.priority', 'DESC')
             ->addOrderBy('t.createdAt', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * All tasks that are not soft-deleted, newest first.
+     *
+     * @return Task[]
+     */
+    public function findAllActive(): array
+    {
+        return $this->createQueryBuilder('t')
+            ->where('t.deletedAt IS NULL')
+            ->orderBy('t.createdAt', 'DESC')
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * Number of non-soft-deleted tasks.
+     */
+    public function countActive(): int
+    {
+        return (int) $this->createQueryBuilder('t')
+            ->select('COUNT(t.id)')
+            ->where('t.deletedAt IS NULL')
+            ->getQuery()
+            ->getSingleScalarResult();
+    }
+
+    /**
+     * Recent non-soft-deleted tasks.
+     *
+     * @return Task[]
+     */
+    public function findRecentActive(int $limit): array
+    {
+        return $this->createQueryBuilder('t')
+            ->where('t.deletedAt IS NULL')
+            ->orderBy('t.createdAt', 'DESC')
+            ->setMaxResults($limit)
             ->getQuery()
             ->getResult();
     }

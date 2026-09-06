@@ -31,7 +31,7 @@ final class TaskFetchController extends AbstractController
         }
 
         $task = $tasks->find($taskId);
-        if (null === $task) {
+        if (null === $task || $task->isDeleted()) {
             return $this->json(['error' => 'Task not found'], Response::HTTP_NOT_FOUND);
         }
 

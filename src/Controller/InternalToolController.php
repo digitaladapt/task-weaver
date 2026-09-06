@@ -52,6 +52,11 @@ final class InternalToolController extends AbstractController
             return $this->json(['error' => 'Event belongs to another worker'], Response::HTTP_FORBIDDEN);
         }
 
+        // Deleted tasks are frozen; no new event activity is accepted.
+        if ($event->getTask()->isDeleted()) {
+            return $this->json(['error' => 'Task is deleted'], Response::HTTP_NOT_FOUND);
+        }
+
         $details = is_array($payload['details'] ?? null) ? $payload['details'] : [];
         $proxy->logInternalToolCall($event, $toolName, $details);
 

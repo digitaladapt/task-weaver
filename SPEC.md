@@ -458,14 +458,25 @@ This keeps the "no internet in the sandbox" property intact while still giving w
 
 | Screen | Contents |
 |--------|----------|
-| `/tasks` | List: name, status badge, schedule, next run, priority, last run; actions (edit/run/pause/resume/delete) |
-| `/tasks/{id}` | Overview; step graph (all non-final steps parallel → final step); typed event timeline per step; tool call listing |
+| `/tasks` | List: name, status badge, schedule, next run, priority, last run; **New** button to the right of the title |
+| `/tasks/{id}` | Overview; step graph (all non-final steps parallel → final step); typed event timeline per step; tool call listing; **Edit** button top right across from "All tasks" |
 | `/tasks/new` | Task form: name/description/schedule; step editor with tags per step and a "final step" toggle |
 | `/tasks/{id}/edit` | Same form, pre-filled |
 | `/tools` | MCP servers + ToolDefs management (endpoint, transport, cred-vars, tags), health check |
 | `/workers` | Registered workers, tags, internal tools, last seen, connection status |
 
 The step editor enforces the two valid shapes (single step, or all-parallel + one final) so invalid configurations can't be saved.
+
+**Task management (create / edit / soft-delete):**
+
+- **New** (top-right of the Tasks list) opens `/tasks/new`; the top-left **Cancel** returns to the list, top-right **Save** persists.
+- **Edit** (top-right of the task view) opens `/tasks/{id}/edit` with the same layout.
+- The **step editor** keeps the final step fixed at the bottom. **Add Step** inserts a new row directly above it; every step except the final one shows a small red ✕ to remove it. Non-final steps run in parallel; the final step consumes their results.
+- Tag selection is a text box with a **focus dropdown** of all known tags (from ToolDefs, workers, and existing steps) not already selected; choosing one adds it as a bubble matching the view's tag aesthetic. Tags can also be typed and Enter/`,`-separated.
+- Removing a step from the editor only takes effect if its **started_at is null** (never started). A step that already ran is kept for history even if dropped from the editor.
+- **Delete Task** lives at the very bottom (edit page only), asks for confirmation, and performs a **soft delete**: `task.deleted_at` is set, `next_run_at` cleared, the task is hidden from the admin UI and excluded from scheduling/claiming/running and all worker APIs, but the task, its steps, and its events are preserved for history. `Task::softDelete()` / `Task::restore()`.
+
+**Soft-delete filtering:** `deleted_at IS NULL` is enforced in `TaskRepository` (list/count/recent/`findDue`), `StepRepository::findClaimable` / `findStaleRunning`, the scheduler's due-query, the dashboard status counts/totals, and every worker-facing controller (fetch/status/event/complete/tool). Soft-deleted tasks 404 in the admin UI and are rejected from all worker endpoints.
 
 ## Development Notes
 

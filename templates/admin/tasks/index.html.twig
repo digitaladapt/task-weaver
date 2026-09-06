@@ -3,7 +3,11 @@
 {% block title %}Tasks · TaskWeaver{% endblock %}
 
 {% block body %}
-    <h1>Tasks</h1>
+    <div class="page-head">
+        <h1>Tasks</h1>
+        <span class="spacer"></span>
+        <a class="btn btn-primary" href="{{ path('app_task_new') }}">New</a>
+    </div>
     <p class="subtitle">All tasks defined on the controller.</p>
 
     {% if tasks is empty %}

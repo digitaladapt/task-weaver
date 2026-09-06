@@ -36,7 +36,9 @@ final class StepCompleteController extends AbstractController
         }
 
         $step = $steps->find($stepId);
-        if (null === $step || $step->getTask()->getId()->toRfc4122() !== $taskId) {
+        if (null === $step
+            || $step->getTask()->getId()->toRfc4122() !== $taskId
+            || $step->getTask()->isDeleted()) {
             return $this->json(['error' => 'Step not found for this task'], Response::HTTP_NOT_FOUND);
         }
 

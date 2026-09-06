@@ -28,9 +28,11 @@ final class DashboardController extends AbstractController
         EventRepository $events,
     ): Response {
         // Grouped status counts via DQL (ServiceEntityRepository::count has no group-by).
+        // Only count non-soft-deleted tasks.
         $statuses = [];
         $rows = $tasks->createQueryBuilder('t')
             ->select('t.status AS status, COUNT(t.id) AS n')
+            ->where('t.deletedAt IS NULL')
             ->groupBy('t.status')
             ->getQuery()
             ->getResult();
@@ -40,14 +42,14 @@ final class DashboardController extends AbstractController
 
         return $this->render('admin/dashboard.html.twig', [
             'totals' => [
-                'tasks' => $tasks->count([]),
+                'tasks' => $tasks->countActive(),
                 'workers' => $workers->count([]),
                 'servers' => $servers->count([]),
                 'tools' => $tools->count([]),
                 'events' => $events->count([]),
             ],
             'statuses' => $statuses,
-            'recent_tasks' => $tasks->findBy([], ['createdAt' => 'DESC'], 8),
+            'recent_tasks' => $tasks->findRecentActive(8),
             'recent_events' => $events->findBy([], ['timestamp' => 'DESC'], 12),
             'recent_workers' => $workers->findBy([], ['createdAt' => 'DESC'], 5),
             'recent_servers' => $servers->findBy([], ['createdAt' => 'DESC'], 5),
