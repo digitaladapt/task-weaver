@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\Entity\Step;
 use App\Entity\Task;
 use App\Repository\TaskRepository;
+use App\Service\ScheduleCronService;
 use App\Service\TagService;
 
 use function array_filter;
@@ -50,6 +51,7 @@ final class TaskController extends AbstractController
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly TagService $tags,
+        private readonly ScheduleCronService $schedule,
     ) {
     }
 
@@ -91,6 +93,7 @@ final class TaskController extends AbstractController
             'all_tags' => $this->tags->allKnown(),
             'errors' => $errors,
             'is_new' => true,
+            'schedule' => $this->schedule->describe($task->getSchedule()),
         ]);
     }
 
@@ -122,6 +125,7 @@ final class TaskController extends AbstractController
             'all_tags' => $this->tags->allKnown(),
             'errors' => $errors,
             'is_new' => false,
+            'schedule' => $this->schedule->describe($task->getSchedule()),
         ]);
     }
 
@@ -174,8 +178,8 @@ final class TaskController extends AbstractController
         $tz = trim((string) ($data['timezone'] ?? ''));
         $task->setTimezone('' !== $tz ? $tz : 'UTC');
 
-        $schedule = trim((string) ($data['schedule'] ?? ''));
-        $task->setSchedule('' !== $schedule ? $schedule : null);
+        // Schedule is now a structured selection; build the cron from it.
+        $task->setSchedule($this->schedule->build($data));
 
         $raw = $data['steps'] ?? [];
         $names = is_array($raw['name'] ?? null) ? $raw['name'] : [];

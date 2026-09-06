@@ -66,15 +66,91 @@
                 <label for="task-desc">Description</label>
                 <textarea id="task-desc" name="description" rows="4" placeholder="What is this task trying to achieve?" class="input">{{ task.description }}</textarea>
             </div>
-            <div class="grid-2">
-                <div class="field">
-                    <label for="task-schedule">Schedule <span class="muted">(cron, optional)</span></label>
-                    <input type="text" id="task-schedule" name="schedule" value="{{ task.schedule ?? '' }}" placeholder="e.g. 0 8 * * 1-5" class="input mono">
+            <div class="field schedule-field">
+                <label for="task-schedule-type">Schedule</label>
+                <select id="task-schedule-type" name="schedule_type" class="input" data-schedule-type>
+                    <option value="one-off" {% if schedule.type == 'one-off' %}selected{% endif %}>One-off (no schedule)</option>
+                    <option value="minutes" {% if schedule.type == 'minutes' %}selected{% endif %}>Every N minutes</option>
+                    <option value="hours" {% if schedule.type == 'hours' %}selected{% endif %}>Every N hours</option>
+                    <option value="days" {% if schedule.type == 'days' %}selected{% endif %}>Daily</option>
+                    <option value="weeks" {% if schedule.type == 'weeks' %}selected{% endif %}>Weekly</option>
+                    <option value="months" {% if schedule.type == 'months' %}selected{% endif %}>Monthly</option>
+                    <option value="custom" {% if schedule.type == 'custom' %}selected{% endif %}>Custom (cron)</option>
+                </select>
+
+                <div class="schedule-options" data-schedule-options="minutes" {% if schedule.type != 'minutes' %}hidden{% endif %}>
+                    <label for="task-schedule-number">Every</label>
+                    <input type="number" id="task-schedule-number" name="schedule_number" value="{{ schedule.number ?? 5 }}" min="1" max="60" class="input schedule-number">
+                    <span class="schedule-unit">minute(s)</span>
                 </div>
-                <div class="field">
-                    <label for="task-priority">Priority</label>
-                    <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="0" step="1" class="input">
+
+                <div class="schedule-options" data-schedule-options="hours" {% if schedule.type != 'hours' %}hidden{% endif %}>
+                    <label for="task-schedule-hours">Every</label>
+                    <input type="number" id="task-schedule-hours" name="schedule_number" value="{{ schedule.number ?? 1 }}" min="1" max="24" class="input schedule-number">
+                    <span class="schedule-unit">hour(s)</span>
+                    <label for="task-schedule-minute">at minute</label>
+                    <input type="number" id="task-schedule-minute" name="schedule_minute" value="{{ schedule.minute ?? 0 }}" min="0" max="59" class="input schedule-number">
                 </div>
+
+                <div class="schedule-options" data-schedule-options="days" {% if schedule.type != 'days' %}hidden{% endif %}>
+                    <label for="task-schedule-days">Every</label>
+                    <select id="task-schedule-days" name="schedule_days" class="input schedule-select">
+                        <option value="everyday" {% if schedule.days|default('everyday') == 'everyday' %}selected{% endif %}>day</option>
+                        <option value="weekends" {% if schedule.days|default('everyday') == 'weekends' %}selected{% endif %}>weekends</option>
+                        <option value="weekdays" {% if schedule.days|default('everyday') == 'weekdays' %}selected{% endif %}>weekdays</option>
+                    </select>
+                    <span class="schedule-unit">at</span>
+                    <select id="task-schedule-time" name="schedule_time" class="input schedule-select">
+                        <option value="morning" {% if schedule.time|default('morning') == 'morning' %}selected{% endif %}>morning</option>
+                        <option value="afternoon" {% if schedule.time|default('morning') == 'afternoon' %}selected{% endif %}>afternoon</option>
+                        <option value="evening" {% if schedule.time|default('morning') == 'evening' %}selected{% endif %}>evening</option>
+                        <option value="night" {% if schedule.time|default('morning') == 'night' %}selected{% endif %}>night</option>
+                    </select>
+                </div>
+
+                <div class="schedule-options" data-schedule-options="weeks" {% if schedule.type != 'weeks' %}hidden{% endif %}>
+                    <label for="task-schedule-day">Every</label>
+                    <select id="task-schedule-day" name="schedule_day" class="input schedule-select">
+                        {% for day in ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'] %}
+                            <option value="{{ day }}" {% if schedule.day|default('Monday') == day %}selected{% endif %}>{{ day }}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="schedule-unit">at</span>
+                    <select name="schedule_time" class="input schedule-select">
+                        <option value="morning" {% if schedule.time|default('morning') == 'morning' %}selected{% endif %}>morning</option>
+                        <option value="afternoon" {% if schedule.time|default('morning') == 'afternoon' %}selected{% endif %}>afternoon</option>
+                        <option value="evening" {% if schedule.time|default('morning') == 'evening' %}selected{% endif %}>evening</option>
+                        <option value="night" {% if schedule.time|default('morning') == 'night' %}selected{% endif %}>night</option>
+                    </select>
+                </div>
+
+                <div class="schedule-options" data-schedule-options="months" {% if schedule.type != 'months' %}hidden{% endif %}>
+                    <label for="task-schedule-month-day">On the</label>
+                    <select id="task-schedule-month-day" name="schedule_day" class="input schedule-select">
+                        {% for d in 1..28 %}
+                            <option value="{{ d }}" {% if schedule.day|default(1) == d %}selected{% endif %}>{{ d }}{% if d in [1,21] %}st{% elseif d in [2,22] %}nd{% elseif d in [3,23] %}rd{% else %}th{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="schedule-unit">at</span>
+                    <select name="schedule_time" class="input schedule-select">
+                        <option value="morning" {% if schedule.time|default('morning') == 'morning' %}selected{% endif %}>morning</option>
+                        <option value="afternoon" {% if schedule.time|default('morning') == 'afternoon' %}selected{% endif %}>afternoon</option>
+                        <option value="evening" {% if schedule.time|default('morning') == 'evening' %}selected{% endif %}>evening</option>
+                        <option value="night" {% if schedule.time|default('morning') == 'night' %}selected{% endif %}>night</option>
+                    </select>
+                </div>
+
+                <div class="schedule-options" data-schedule-options="custom" {% if schedule.type != 'custom' %}hidden{% endif %}>
+                    <label for="task-schedule-cron">Cron expression</label>
+                    <input type="text" id="task-schedule-cron" name="schedule_cron" value="{{ schedule.cron ?? '' }}" placeholder="e.g. 0 8 * * 1-5" class="input mono">
+                </div>
+                <p class="muted schedule-hint">
+                    {% if schedule.type == 'one-off' %}Runs once when manually triggered.{% else %}The cron expression is generated from your selection.{% endif %}
+                </p>
+            </div>
+            <div class="field">
+                <label for="task-priority">Priority</label>
+                <input type="number" id="task-priority" name="priority" value="{{ task.priority }}" min="0" step="1" class="input">
             </div>
             <div class="field">
                 <label for="task-timezone">Timezone</label>
@@ -252,26 +328,32 @@
             top: 100%;
             left: 0;
             right: 0;
-            z-index: 20;
+            z-index: 30;
             background: var(--panel-2);
             border: 1px solid var(--border);
-            border-radius: 6px;
-            margin-top: 2px;
-            max-height: 200px;
+            border-radius: 8px;
+            margin-top: 4px;
+            max-height: 220px;
             overflow-y: auto;
-            box-shadow: 0 6px 20px rgba(0,0,0,.4);
+            box-shadow: 0 8px 24px rgba(0,0,0,.5);
+            padding: 4px;
         }
         .tag-dropdown .tag-option {
-            padding: 6px 10px;
+            padding: 7px 10px;
+            border-radius: 5px;
             font-family: var(--mono);
             font-size: 12px;
+            color: var(--text);
             cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
         .tag-dropdown .tag-option:hover, .tag-dropdown .tag-option.hover {
             background: var(--panel);
             color: var(--accent);
         }
-        .tag-dropdown .tag-option.empty { color: var(--muted); cursor: default; font-style: italic; font-family: inherit; }
+        .tag-dropdown .tag-option.empty { color: var(--muted); cursor: default; font-style: italic; font-family: inherit; justify-content: flex-start; }
 
         .delete-zone {
             border-top: 1px solid var(--border);
@@ -280,6 +362,34 @@
             text-align: center;
         }
         .inline { display: inline; }
+
+        /* Schedule picker */
+        .schedule-field { }
+        .schedule-options {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+            padding: 10px 12px;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .schedule-options[hidden] { display: none; }
+        .schedule-options label {
+            margin: 0;
+            font-size: 12px;
+            text-transform: none;
+            letter-spacing: 0;
+            color: var(--muted);
+            font-weight: 500;
+            display: inline;
+        }
+        .schedule-number { width: 80px; display: inline-block; }
+        .schedule-select { width: auto; display: inline-block; }
+        .schedule-unit { color: var(--muted); font-size: 13px; }
+        .schedule-hint { margin-top: 6px; font-size: 12px; }
     </style>
 {% endblock %}
 
@@ -289,6 +399,25 @@
         const ALL_TAGS = {{ all_tags|json_encode|raw }};
         const list = document.getElementById('step-list');
         const template = document.getElementById('step-row-template');
+
+        // ── Schedule picker ────────────────────────────────────────────────
+        const scheduleType = document.querySelector('[data-schedule-type]');
+        const scheduleOptions = document.querySelectorAll('[data-schedule-options]');
+        function updateScheduleOptions() {
+            const t = scheduleType.value;
+            scheduleOptions.forEach(function (el) {
+                el.hidden = el.dataset.scheduleOptions !== t;
+            });
+            const hint = document.querySelector('.schedule-hint');
+            if (hint) {
+                hint.textContent = t === 'one-off'
+                    ? 'Runs once when manually triggered.'
+                    : t === 'custom'
+                        ? 'Enter any valid cron expression.'
+                        : 'The cron expression is generated from your selection.';
+            }
+        }
+        if (scheduleType) scheduleType.addEventListener('change', updateScheduleOptions);
 
         // ── Step add/remove ────────────────────────────────────────────────
         function addStep() {
