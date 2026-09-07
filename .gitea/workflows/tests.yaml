@@ -1,0 +1,64 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'feat*'
+      - 'fix*'
+      - 'cleanup*'
+      - 'chore*'
+  pull_request:
+    branches:
+      - 'main'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: ctype, iconv, pdo, pdo_sqlite, mbstring, xml, curl
+          coverage: none
+          tools: composer:v2
+
+      # Authenticate to GitHub to raise API rate limit from 60 → 5,000 req/hour.
+      # Composer downloads packages from api.github.com; without auth, the 143
+      # GitHub-hosted packages in composer.lock exceed the 60 req/hour limit.
+      - name: Configure GitHub OAuth token
+        env:
+          GITHUB_TOKEN: ${{ secrets.SYNC_GITHUB_TOKEN }}
+        run: composer config --global github-oauth.github.com "$GITHUB_TOKEN"
+
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-publish
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Create .env from .env.test
+        run: cp .env.test .env
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run php-cs-fixer
+        run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+      - name: Run tests
+        run: vendor/bin/phpunit --configuration phpunit.dist.xml
