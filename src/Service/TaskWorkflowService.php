@@ -38,6 +38,58 @@ final class TaskWorkflowService
     }
 
     /**
+     * Make a task claimable for a fresh run.
+     *
+     * Resets every step to `pending` (clearing started/finished/expiry
+     * timestamps and results) and marks the task `ready`. Used by the admin
+     * "Run" action (one-off tasks) and as the per-occurrence reset for
+     * recurring tasks.
+     *
+     * @throws LogicException when any step is currently `running` (you may not
+     *                        re-run a task that is actively being worked on)
+     */
+    public function resetForRun(Task $task): void
+    {
+        $now = new DateTimeImmutable();
+
+        foreach ($task->getSteps() as $step) {
+            if (Step::STATUS_RUNNING === $step->getStatus()) {
+                throw new LogicException(sprintf(
+                    'Task %s cannot be re-run while step %s is running.',
+                    $task->getId()->toRfc4122(),
+                    $step->getId()->toRfc4122(),
+                ));
+            }
+
+            if (Step::STATUS_PENDING === $step->getStatus()) {
+                continue;
+            }
+            $step->setStatus(Step::STATUS_PENDING);
+            $step->setStartedAt(null);
+            $step->setFinishedAt(null);
+            $step->setExpiresAt(null);
+            $step->setResult(null);
+            $this->em->persist($step);
+        }
+
+        $task->setStatus(Task::STATUS_READY);
+        if (null !== $task->getSchedule()) {
+            // Recurring: run now but stay on cadence — the cursor is the next
+            // scheduled occurrence, not "now", so the tick won't re-fire it
+            // (and re-reset a running step) every minute while it's waiting
+            // for a worker.
+            $task->setNextRunAt($this->scheduler->nextRunAt($task, $now));
+        } else {
+            // One-off: "next run is now" — queued for the next available
+            // worker. The scheduler ignores null-schedule tasks, so this is
+            // never re-triggered by a tick.
+            $task->setNextRunAt($now);
+        }
+        $task->touch();
+        $this->em->persist($task);
+    }
+
+    /**
      * @return array<string, mixed>|null the persisted step key (or null when generated here)
      */
     public function markStepRunning(Step $step, Worker $worker): void

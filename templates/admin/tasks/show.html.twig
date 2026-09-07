@@ -6,6 +6,11 @@
     <div class="page-head">
         <a href="{{ path('app_tasks') }}">← All tasks</a>
         <span class="spacer"></span>
+        {% if task.status != 'running' %}
+        <form method="post" action="{{ path('app_task_run', {id: task.id}) }}" class="inline">
+            <button type="submit" class="btn btn-primary">Run</button>
+        </form>
+        {% endif %}
         <a class="btn" href="{{ path('app_task_edit', {id: task.id}) }}">Edit</a>
     </div>
     <h1>{{ task.name }}</h1>

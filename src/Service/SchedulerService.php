@@ -69,6 +69,10 @@ final class SchedulerService
     private function resetStepsForNextRun(Task $task): void
     {
         foreach ($task->getSteps() as $step) {
+            // Never clobber an actively-running step (a worker is on it).
+            if (Step::STATUS_RUNNING === $step->getStatus()) {
+                continue;
+            }
             if (Step::STATUS_PENDING === $step->getStatus()) {
                 continue;
             }

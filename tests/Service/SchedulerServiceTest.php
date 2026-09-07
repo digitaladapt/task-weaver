@@ -244,4 +244,67 @@ class SchedulerServiceTest extends TestCase
         $ref->invoke($scheduler, $task);
         self::assertSame(Step::STATUS_PENDING, $stepP->getStatus());
     }
+
+    // ── 7. Admin "Run" action (resetForRun) ─────────────────────────────
+
+    public function testRunResetsOneOffTaskForImmediatePickup(): void
+    {
+        // A failed one-off task, previously run (step in a terminal state).
+        $task = new Task('one-off', '');
+        $task->setStatus(Task::STATUS_FAILED);
+        $step = new Step('do', '');
+        $step->setIsFinal(true);
+        $step->setStatus(Step::STATUS_FAILED);
+        $step->setResult(['old' => 1]);
+        $step->setStartedAt(new DateTimeImmutable('2026-09-06 10:00:00'));
+        $step->setFinishedAt(new DateTimeImmutable('2026-09-06 10:05:00'));
+        $task->addStep($step);
+
+        $workflow = $this->workflow();
+        $workflow->resetForRun($task);
+
+        // One-off → ready, next_run = now (queued for next worker), step reset.
+        self::assertSame(Task::STATUS_READY, $task->getStatus());
+        self::assertNotNull($task->getNextRunAt(), 'one-off run queues with next_run = now');
+        self::assertLessThanOrEqual(new DateTimeImmutable(), $task->getNextRunAt());
+        self::assertSame(Step::STATUS_PENDING, $step->getStatus());
+        self::assertNull($step->getResult());
+        self::assertNull($step->getStartedAt());
+        self::assertNull($step->getFinishedAt());
+    }
+
+    public function testRunKeepsRecurringTaskOnCadence(): void
+    {
+        // A completed recurring task — "Run now" should run immediately but
+        // keep the upcoming scheduled cursor, not set it to now.
+        $task = $this->recurringTask('0 8 * * 1-5', new DateTimeImmutable('2026-09-08 08:00:00', new DateTimeZone('UTC')));
+        $task->setStatus(Task::STATUS_COMPLETED);
+        $step = new Step('final', '');
+        $step->setIsFinal(true);
+        $step->setStatus(Step::STATUS_COMPLETED);
+        $task->addStep($step);
+
+        $this->workflow()->resetForRun($task);
+
+        self::assertSame(Task::STATUS_READY, $task->getStatus());
+        self::assertSame(Step::STATUS_PENDING, $step->getStatus());
+        self::assertNotNull($task->getNextRunAt());
+        // The cursor is the next scheduled occurrence, not "now" (so the tick
+        // won't re-fire it every minute while waiting on a worker). Since the
+        // test runs "now", the next occurrence is in the future.
+        self::assertGreaterThan(new DateTimeImmutable(), $task->getNextRunAt());
+    }
+
+    public function testRunRejectsWhileStepIsRunning(): void
+    {
+        $task = new Task('in-flight', '');
+        $task->setStatus(Task::STATUS_READY);
+        $step = new Step('do', '');
+        $step->setIsFinal(true);
+        $step->setStatus(Step::STATUS_RUNNING);
+        $task->addStep($step);
+
+        $this->expectException(\LogicException::class);
+        $this->workflow()->resetForRun($task);
+    }
 }

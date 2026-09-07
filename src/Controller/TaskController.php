@@ -10,6 +10,7 @@ use App\Repository\TaskRepository;
 use App\Service\ScheduleCronService;
 use App\Service\SchedulerService;
 use App\Service\TagService;
+use App\Service\TaskWorkflowService;
 use App\Service\TimezoneService;
 
 use function array_filter;
@@ -20,6 +21,7 @@ use function count;
 
 use Cron\CronExpression;
 use Doctrine\ORM\EntityManagerInterface;
+use LogicException;
 
 use function explode;
 use function is_array;
@@ -161,6 +163,28 @@ final class TaskController extends AbstractController
         return $this->render('admin/tasks/show.html.twig', [
             'task' => $task,
         ]);
+    }
+
+    #[Route('/{id}/run', name: 'app_task_run', methods: ['POST'], requirements: ['id' => '[0-9a-fA-F-]{36}'])]
+    public function run(TaskRepository $tasks, TaskWorkflowService $workflow, string $id): Response
+    {
+        $task = $tasks->find(Uuid::fromString($id)->toRfc4122());
+        if (!$task instanceof Task || $task->isDeleted()) {
+            throw $this->createNotFoundException('Task not found');
+        }
+
+        try {
+            $workflow->resetForRun($task);
+            $this->em->flush();
+        } catch (LogicException $e) {
+            $this->addFlash('error', $e->getMessage());
+
+            return $this->redirectToRoute('app_task_show', ['id' => $id]);
+        }
+
+        $this->addFlash('success', sprintf('Task "%s" queued for the next available worker.', $task->getName()));
+
+        return $this->redirectToRoute('app_task_show', ['id' => $id]);
     }
 
     /**
