@@ -14,9 +14,21 @@ parameters:
     env(TASKWEAVER_ENROLLMENT_TOKEN): 'dev-enrollment-token'
     env(TASKWEAVER_LLM_URL): 'http://llm:11434/v1'
     env(TASKWEAVER_LLM_MODEL): 'llama3.1'
+    # Provider key for an external/keyed LLM. Empty → direct local LLM
+    # channel (workers talk to TASKWEAVER_LLM_URL themselves). Set → the
+    # controller proxies all worker LLM traffic via /api/worker/llm.
+    env(TASKWEAVER_LLM_API_KEY): ''
     env(TASKWEAVER_SYSTEM_PROMPT_OVERRIDE): null
     # Deployment-wide scheduling timezone; empty falls back to the system default.
     env(TASKWEAVER_TIMEZONE): ''
+
+    # LLM proxy (keyed/external providers). The controller holds the key;
+    # workers authenticate with their Tier-1 key. Only active when the key
+    # is set. The upstream URL defaults to TASKWEAVER_LLM_URL + /chat/completions.
+    env(TASKWEAVER_LLM_PROXY_UPSTREAM_URL): ''
+    llm_api_key: '%env(TASKWEAVER_LLM_API_KEY)%'
+    llm_proxy_upstream_url: '%env(default::TASKWEAVER_LLM_URL)%/chat/completions'
+    llm_proxy_output_buffer: '%env(int:TASKWEAVER_CONTEXT_OUTPUT_BUFFER)%'
 
 services:
     # default configuration for services in *this* file
@@ -54,6 +66,7 @@ services:
             $llmUrl: '%env(TASKWEAVER_LLM_URL)%'
             $llmModel: '%env(TASKWEAVER_LLM_MODEL)%'
             $systemPromptOverride: '%env(TASKWEAVER_SYSTEM_PROMPT_OVERRIDE)%'
+            $llmProxied: '%env(bool:TASKWEAVER_LLM_API_KEY)%'
 
     # Step timeout for the workflow service.
     App\Service\TaskWorkflowService:

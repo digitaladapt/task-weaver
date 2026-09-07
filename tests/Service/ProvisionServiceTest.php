@@ -17,7 +17,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class ProvisionServiceTest extends TestCase
 {
-    private function service(?Worker $existing = null): ProvisionService
+    private function service(?Worker $existing = null, bool $llmProxied = false): ProvisionService
     {
         $repo = $this->createStub(WorkerRepository::class);
         $repo->method('findOneBy')->willReturn($existing);
@@ -28,10 +28,14 @@ final class ProvisionServiceTest extends TestCase
             $em,
             $repo,
             'enrollment-token',
-            600,
-            6000,
-            1500,
+            1650,
+            6750,
+            1650,
             1,
+            'http://llm:11434/v1',
+            'llama3.1',
+            null,
+            $llmProxied,
         );
     }
 
@@ -67,5 +71,32 @@ final class ProvisionServiceTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         $this->service()->provision('wrong', 'dev-worker', []);
+    }
+
+    public function testDevWorkerCanClaimDemoGauntletSteps(): void
+    {
+        $result = $this->service()->provision('enrollment-token', 'dev-worker', ['image' => 'taskweaver/dev-worker:latest']);
+
+        // The dev-worker variant carries every demo tool tag so it can
+        // claim all three gauntlet steps (worker tags ⊇ step tags).
+        foreach (['demo-echo', 'demo-random', 'demo-time'] as $tag) {
+            self::assertContains($tag, $result['tags']);
+        }
+    }
+
+    public function testLlmAuthConfiguredDirectlyWhenNoKey(): void
+    {
+        $result = $this->service()->provision('enrollment-token', 'dev-worker', []);
+
+        self::assertSame('direct', $result['config']['llm_auth']);
+        self::assertSame('http://llm:11434/v1', $result['config']['llm_url']);
+    }
+
+    public function testLlmAuthProxiedWhenKeyConfigured(): void
+    {
+        $result = $this->service(null, true)->provision('enrollment-token', 'dev-worker', []);
+
+        self::assertSame('proxy', $result['config']['llm_auth']);
+        self::assertSame('/api/worker/llm', $result['config']['llm_url']);
     }
 }

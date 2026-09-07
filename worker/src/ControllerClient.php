@@ -122,6 +122,18 @@ final class ControllerClient
     }
 
     /**
+     * PATCH /api/worker/step/{taskId}/{stepId}/status with status=failed —
+     * Tier-1. Report a worker-side failure (e.g. the LLM is unreachable)
+     * so the shape resolves now instead of waiting for lazy expiry.
+     */
+    public function reportFailure(string $taskId, string $stepId, string $reason): array
+    {
+        return $this->request('PATCH', sprintf('/api/worker/step/%s/%s/status', urlencode($taskId), urlencode($stepId)), [
+            'json' => ['status' => 'failed', 'reason' => $reason],
+        ]);
+    }
+
+    /**
      * POST /api/worker/step/{taskId}/{stepId}/complete — Tier-1.
      *
      * @param array<string, mixed> $result

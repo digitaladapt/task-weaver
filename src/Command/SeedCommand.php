@@ -88,6 +88,44 @@ final class SeedCommand extends Command
         ]);
         $server->addToolDef($statusTool);
 
+        // --- Local demo MCP server (dev/demo-mcp.php) for end-to-end runs ---
+        // Run `php -S 127.0.0.1:9938 dev/demo-mcp.php` and this server's
+        // tools are callable for real. The tool gauntlet task below uses
+        // these to validate the multistep envelope end-to-end.
+        $demoServer = new McpServer('dev-demo', McpServer::TRANSPORT_OPENAPI, 'http://127.0.0.1:9938');
+        $demoServer->setCredVars([]);
+        $demoServer->setDescription('Local demo tools (echo/random/time) for the seeded tool gauntlet task. Run dev/demo-mcp.php first.');
+        $this->em->persist($demoServer);
+
+        $demoEcho = new ToolDef('demo.echo', ['demo-echo', 'echo']);
+        $demoEcho->setDescription('Echoes back the given message with a nonce.');
+        $demoEcho->setSchema([
+            'type' => 'object',
+            'properties' => ['message' => ['type' => 'string', 'description' => 'Message to echo']],
+            'required' => ['message'],
+            'x-mcp' => ['method' => 'POST', 'path' => '/echo', 'body_param' => null],
+        ]);
+        $demoServer->addToolDef($demoEcho);
+
+        $demoRandom = new ToolDef('demo.random', ['demo-random']);
+        $demoRandom->setDescription('Returns n random numbers between 0 and 1000.');
+        $demoRandom->setSchema([
+            'type' => 'object',
+            'properties' => ['n' => ['type' => 'integer', 'description' => 'How many numbers']],
+            'required' => ['n'],
+            'x-mcp' => ['method' => 'GET', 'path' => '/random/{n}', 'path_params' => ['n']],
+        ]);
+        $demoServer->addToolDef($demoRandom);
+
+        $demoTime = new ToolDef('demo.time', ['demo-time']);
+        $demoTime->setDescription('Returns the current server time in several formats.');
+        $demoTime->setSchema([
+            'type' => 'object',
+            'properties' => [],
+            'x-mcp' => ['method' => 'POST', 'path' => '/time'],
+        ]);
+        $demoServer->addToolDef($demoTime);
+
         // --- Sample worker (controller-assigned tags; seen recently) ---
         $worker = new Worker('dev-worker', ['terminal', 'weather', 'echo']);
         $worker->markSeen();
@@ -202,6 +240,39 @@ final class SeedCommand extends Command
         $task2->setStatus(Task::STATUS_COMPLETED);
         $task2->touch();
 
+        // --- Tool gauntlet task: 3 parallel tool-call steps + final envelope ---
+        // The end-to-end multistep validation task (WORKER.md §5 run shape 2).
+        // Each non-final step exercises one demo tool (demo.echo,
+        // demo.random, demo.time — dev/demo-mcp.php); the final step
+        // consumes all three results via the tool-call-results envelope.
+        $task4 = new Task('Tool gauntlet', 'Call three different demo tools in parallel steps, then summarize the results.');
+        $task4->setStatus(Task::STATUS_READY);
+        $this->em->persist($task4);
+
+        $g1 = new Step('Echo step', 'Call the demo.echo tool with the message "hello gauntlet" and report what came back.');
+        $g1->setTags(['demo-echo']);
+        $g1->setIsFinal(false);
+        $g1->setSortOrder(0);
+        $task4->addStep($g1);
+
+        $g2 = new Step('Random step', 'Call the demo.random tool with n=5 and report the numbers.');
+        $g2->setTags(['demo-random']);
+        $g2->setIsFinal(false);
+        $g2->setSortOrder(1);
+        $task4->addStep($g2);
+
+        $g3 = new Step('Time step', 'Call the demo.time tool and report the server time.');
+        $g3->setTags(['demo-time']);
+        $g3->setIsFinal(false);
+        $g3->setSortOrder(2);
+        $task4->addStep($g3);
+
+        $g4 = new Step('Gauntlet summary', 'Summarize the results of the three prior steps (echo, random, time).');
+        $g4->setTags(['echo']);
+        $g4->setIsFinal(true);
+        $g4->setSortOrder(3);
+        $task4->addStep($g4);
+
         // --- Sample failure task: external tool call blew up (final step) ---
         // Demonstrates the error/step_failed path: the third-party status API
         // returned 503, so the step failed and the task is marked failed.
@@ -276,6 +347,7 @@ final class SeedCommand extends Command
         $io->writeln(sprintf('  Task 1: %s (single-step, final, ready) — unclaimed', $task1->getId()->toRfc4122()));
         $io->writeln(sprintf('  Task 2: %s (multi-step: weather + final) — completed with %d events', $task2->getId()->toRfc4122(), count($task2->getEvents())));
         $io->writeln(sprintf('  Task 3: %s (single-step, failure) — failed with %d events', $task3->getId()->toRfc4122(), count($task3->getEvents())));
+        $io->writeln(sprintf('  Task 4: %s (tool gauntlet: 3 parallel tool steps + final) — ready, needs demo-mcp server (dev/demo-mcp.php)', $task4->getId()->toRfc4122()));
 
         return Command::SUCCESS;
     }

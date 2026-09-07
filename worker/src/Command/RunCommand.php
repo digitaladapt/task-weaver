@@ -4,33 +4,46 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker\Command;
 
+use function count;
+use function in_array;
+use function is_array;
+use function is_string;
+
+use RuntimeException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use TaskWeaverWorker\ControllerClient;
+use TaskWeaverWorker\ContextBudget;
+use TaskWeaverWorker\HttpException;
 use TaskWeaverWorker\LlmClient;
-use function in_array;
 use TaskWeaverWorker\Tool\InternalToolRegistry;
 use TaskWeaverWorker\Tool\TerminalTool;
 
 /**
  * Reference worker run loop.
  *
- * v1 scope: EXTERNAL tools are forwarded to TaskWeaver (the tool proxy);
- * INTERNAL tools (sandbox-local) run in the worker and are logged back to
- * the controller via /tool/internal. The `terminal` internal tool is a
- * SAFETY STUB that echoes its command instead of executing (see
- * TerminalTool docblock) — TODO wired to the real runner before v1 is done.
- *
  * Lifecycle per WORKER.md §5:
  *   boot → provision → loop { claim → fetch → [per step: running →
  *   event → LLM loop → tool calls → complete] } with abandon-on-denial.
+ *
+ * The LLM loop is bounded and defensive:
+ *  - unknown/invalid tool calls get an error result fed back to the model
+ *    so it can correct itself (bounded rounds, then the step fails);
+ *  - tool results are capped and history pruned to the context budget;
+ *  - the system prompt honors the controller-issued override.
  */
 #[AsCommand(name: 'taskweaver:run', description: 'Run the reference worker loop')]
 final class RunCommand extends Command
 {
+    /** Bounded LLM round-trips per step before we give up on the model. */
+    private const MAX_LLM_ROUNDS = 20;
+
+    /** Per-result token cap for tool results fed back to the model. */
+    private const TOOL_RESULT_TOKEN_CAP = 1500;
+
     protected function configure(): void
     {
         $this
@@ -39,20 +52,22 @@ final class RunCommand extends Command
             ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Worker name', getenv('WORKER_NAME') ?: 'dev-worker')
             ->addOption('llm-url', null, InputOption::VALUE_REQUIRED, 'Local LLM base URL', getenv('TASKWEAVER_LLM_URL') ?: 'http://llm:11434/v1')
             ->addOption('llm-model', null, InputOption::VALUE_REQUIRED, 'Local LLM model', getenv('TASKWEAVER_LLM_MODEL') ?: 'llama3.1')
-            ->addOption('once', null, InputOption::VALUE_NONE, 'Claim and run one task, then exit');
+            ->addOption('once', null, InputOption::VALUE_NONE, 'Claim and run one task, then exit')
+            ->addOption('max-rounds', null, InputOption::VALUE_REQUIRED, 'Max LLM rounds per step', (string) self::MAX_LLM_ROUNDS);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $controller = $input->getOption('controller');
-        $token = $input->getOption('enrollment-token');
-        $name = $input->getOption('name');
-        $llmUrl = $input->getOption('llm-url');
-        $llmModel = $input->getOption('llm-model');
+        $controller = (string) $input->getOption('controller');
+        $token = (string) $input->getOption('enrollment-token');
+        $name = (string) $input->getOption('name');
+        $llmUrl = (string) $input->getOption('llm-url');
+        $llmModel = (string) $input->getOption('llm-model');
         $once = (bool) $input->getOption('once');
+        $maxRounds = max(1, (int) $input->getOption('max-rounds'));
 
         // --- Boot / provision ---
-        $client = new ControllerClient((string) $controller, (string) $token);
+        $client = new ControllerClient($controller, $token);
 
         // Default descriptor uses the `dev-worker` variant so the controller
         // provisions this worker with the tags needed to claim the seeded
@@ -61,20 +76,31 @@ final class RunCommand extends Command
         $provisioned = $client->provision($name, ['image' => 'taskweaver/dev-worker:latest']);
         $output->writeln(sprintf('Provisioned worker %s (tags: %s)', $provisioned['worker_id'] ?? '?', implode(',', $provisioned['tags'] ?? [])));
 
-        // The controller is the source of truth for the LLM endpoint
-        // (WORKER.md provision -> config.llm_url). Prefer the controller's
-        // issued value unless the operator explicitly pointed this worker at a
-        // different LLM via --llm-url (CLI) or TASKWEAVER_LLM_URL (env) — a
-        // local-debug escape hatch.
         $config = is_array($provisioned['config'] ?? null) ? $provisioned['config'] : [];
+
+        // The controller is the source of truth for the LLM channel
+        // (WORKER.md provision -> config.llm_url). Prefer the controller's
+        // issued value unless the operator explicitly pointed this worker at
+        // a different LLM via --llm-url (CLI) or TASKWEAVER_LLM_URL (env) —
+        // a local-debug escape hatch.
         $operatorOverride = $input->hasParameterOption('--llm-url', true)
             || (($envUrl = getenv('TASKWEAVER_LLM_URL')) !== false && $envUrl !== '');
-        if (!$operatorOverride) {
-            $issuedUrl = is_string($config['llm_url'] ?? null) ? $config['llm_url'] : '';
-            if ($issuedUrl !== '') {
-                $llmUrl = $issuedUrl;
-            }
+        $issuedUrl = is_string($config['llm_url'] ?? null) ? $config['llm_url'] : '';
+        if (!$operatorOverride && $issuedUrl !== '') {
+            $llmUrl = $issuedUrl;
         }
+
+        // A relative issued URL (proxy mode: '/api/worker/llm') resolves
+        // against the controller base URL.
+        if (str_starts_with($llmUrl, '/')) {
+            $llmUrl = rtrim($controller, '/') . $llmUrl;
+        }
+
+        // LLM channel: 'direct' (local LLM, no key) or 'proxy' (controller's
+        // /api/worker/llm route, worker key authenticates, controller holds
+        // the provider key).
+        $llmAuth = is_string($config['llm_auth'] ?? null) ? $config['llm_auth'] : 'direct';
+        $bearerToken = ($llmAuth === 'proxy') ? $client->workerKey() : null;
 
         // Same flow for the model: prefer the controller's issued value unless
         // the operator explicitly overrode it via --llm-model (CLI) or
@@ -88,13 +114,24 @@ final class RunCommand extends Command
                 }
             }
         }
-        $llm = new LlmClient((string) $llmUrl, (string) $llmModel);
-        $output->writeln(sprintf('LLM endpoint: %s (model: %s)', $llmUrl, $llmModel));
+        $llm = new LlmClient($llmUrl, $llmModel, $bearerToken);
 
-        // Internal (sandbox-local) tools this worker ships. v1 ships only the
-        // `terminal` safety stub (echo-only — see TerminalTool docblock).
-        // We only expose the tools the controller SANCTIONED at provision
-        // (WORKER.md §5: capabilities are server-assigned, never self-declared).
+        // Context budget from the controller-issued config.
+        $budget = ContextBudget::fromConfig($config);
+        $llm->setContextBudget($budget->maxTokens(), $budget->requestSize() + $budget->maxTokens());
+        $output->writeln(sprintf('LLM endpoint: %s (model: %s, auth: %s)', $llmUrl, $llmModel, $llmAuth));
+        $output->writeln(sprintf('Context budget: %d request + %d output tokens', $budget->requestSize(), $budget->maxTokens()));
+
+        // System prompt: static image default, overrideable by the
+        // controller-issued config (WORKER.md §6 → Prompt assembly).
+        $systemPromptOverride = is_string($config['system_prompt_override'] ?? null) ? $config['system_prompt_override'] : '';
+        if ($systemPromptOverride !== '') {
+            $output->writeln('Using controller-issued system prompt override');
+        }
+
+        // Internal (sandbox-local) tools this worker ships. We only expose
+        // the tools the controller SANCTIONED at provision (WORKER.md §5:
+        // capabilities are server-assigned, never self-declared).
         $sanctioned = is_array($provisioned['internal_tools'] ?? null) ? $provisioned['internal_tools'] : [];
         $internalTools = new InternalToolRegistry();
         $allInternal = [new TerminalTool()];
@@ -133,7 +170,7 @@ final class RunCommand extends Command
             $output->writeln(sprintf('Claimed task %s step %s', $taskId, $stepId));
 
             try {
-                $this->runStep($client, $llm, $internalTools, $taskId, $stepId, $output);
+                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $maxRounds, $output);
             } catch (HttpException $e) {
                 if ($e->isDenial()) {
                     // Abandon-on-denial: the step's fate is already decided
@@ -141,6 +178,16 @@ final class RunCommand extends Command
                     $output->writeln(sprintf('<comment>Abandoning step %s (%d): %s</comment>', $stepId, $e->status, $e->getMessage()));
                 } else {
                     $output->writeln(sprintf('<error>Step %s failed: %s</error>', $stepId, $e->getMessage()));
+                }
+            } catch (RuntimeException $e) {
+                // LLM unrecoverable / max rounds exceeded: report the
+                // failure so the shape resolves now instead of waiting for
+                // the lazy expiry deadline.
+                $output->writeln(sprintf('<error>Step %s failed: %s</error>', $stepId, $e->getMessage()));
+                try {
+                    $client->reportFailure($taskId, $stepId, $e->getMessage());
+                } catch (HttpException $reportFailure) {
+                    $output->writeln(sprintf('<comment>Failure report rejected (%d): %s</comment>', $reportFailure->status, $reportFailure->getMessage()));
                 }
             }
 
@@ -150,8 +197,17 @@ final class RunCommand extends Command
         } while (true);
     }
 
-    private function runStep(ControllerClient $client, LlmClient $llm, InternalToolRegistry $internalTools, string $taskId, string $stepId, OutputInterface $output): void
-    {
+    private function runStep(
+        ControllerClient $client,
+        LlmClient $llm,
+        InternalToolRegistry $internalTools,
+        ContextBudget $budget,
+        string $systemPromptOverride,
+        string $taskId,
+        string $stepId,
+        int $maxRounds,
+        OutputInterface $output,
+    ): void {
         // Fetch task + schema, then mark running.
         $taskData = $client->fetchTask($taskId);
         $stepData = $this->findStep($taskData, $stepId);
@@ -178,22 +234,50 @@ final class RunCommand extends Command
         $stepDescription = (string) ($stepData['description'] ?? '');
         $isFinal = (bool) ($stepData['is_final'] ?? false);
 
-        // The system prompt (static, image default) + grounding + assignment.
-        $grounding = $this->grounding();
+        // System prompt: override if issued, else the image default.
+        $system = $systemPromptOverride !== ''
+            ? $systemPromptOverride
+            : $this->systemPrompt($stepName, $stepTags, $isFinal);
+
+        // Final step: consume the tool-call-results envelope of all prior
+        // steps (SPEC.md → Final-Step Input). Non-final steps don't see it.
+        $userContent = $this->grounding() . "\n\n" . $stepDescription;
+        if ($isFinal) {
+            $envelope = $this->buildEnvelope($taskData);
+            if ($envelope !== null) {
+                $userContent .= "\n\n## Prior step results\n\nThe following tool calls were executed for the earlier steps of this task. Consume their results as if you had issued them yourself:\n\n" . $envelope;
+            }
+        }
+
         $messages = [
-            ['role' => 'system', 'content' => $this->systemPrompt($stepName, $stepTags, $isFinal)],
-            ['role' => 'user', 'content' => $grounding . "\n\n" . $stepDescription],
+            ['role' => 'system', 'content' => $system],
+            ['role' => 'user', 'content' => $userContent],
         ];
 
         // LLM tool loop: internal tools run locally, external tools are
         // forwarded to TaskWeaver. Both are presented to the LLM together.
         $result = ['summary' => sprintf('Step "%s" ran with %d tools available.', $stepName, count($tools))];
 
+        $round = 0;
         while (true) {
-            $response = $llm->chat($messages, $tools);
-            $messages[] = ['role' => 'assistant', 'content' => $response['content']];
+            if (++$round > $maxRounds) {
+                // Bounded rounds: the model kept calling tools (or emitting
+                // garbage) without finishing. Fail the step with a clear
+                // reason rather than looping forever.
+                throw new RuntimeException(sprintf('Step exceeded %d LLM rounds without completing', $maxRounds));
+            }
 
-            $toolCalls = $response['tool_calls'] ?? [];
+            $response = $llm->chat(
+                $budget->pruneHistory($messages, $this->toolSchemaTokens($tools)),
+                $tools,
+            );
+            $messages[] = [
+                'role' => 'assistant',
+                'content' => $response['content'],
+                'tool_calls' => $response['tool_calls'],
+            ];
+
+            $toolCalls = $response['tool_calls'];
             if ($toolCalls === []) {
                 // No more tool calls — the step is done.
                 if ($response['content'] !== '') {
@@ -203,13 +287,18 @@ final class RunCommand extends Command
             }
 
             foreach ($toolCalls as $toolCall) {
-                $fn = $toolCall['function'] ?? [];
+                $fn = is_array($toolCall['function'] ?? null) ? $toolCall['function'] : [];
                 $toolName = (string) ($fn['name'] ?? '');
+                $callId = (string) ($toolCall['id'] ?? '');
                 $args = is_array($fn['arguments'] ?? null)
                     ? $fn['arguments']
                     : (json_decode((string) ($fn['arguments'] ?? '{}'), true) ?: []);
 
+                // --- Robust tool-call handling: invalid calls get an error
+                // result fed back so the model can correct itself. Never
+                // crash the loop on a malformed call.
                 if ($toolName === '') {
+                    $messages[] = $this->toolResultMessage($callId, ['ok' => false, 'error' => 'Malformed tool call: missing tool name']);
                     continue;
                 }
 
@@ -230,15 +319,34 @@ final class RunCommand extends Command
                         // continue with the result we already have.
                         $output->writeln(sprintf('<comment>Internal tool log failed (%d): %s</comment>', $e->status, $e->getMessage()));
                     }
-                } else {
+                } elseif ($this->isKnownTool($tools, $toolName)) {
                     // External tool → forward to TaskWeaver with the event key.
                     $output->writeln(sprintf('Calling external tool %s', $toolName));
-                    $callResult = $client->callTool($taskId, $eventId, $eventKey, $toolName, $args, null);
+                    try {
+                        $callResult = $client->callTool($taskId, $eventId, $eventKey, $toolName, $args, null);
+                    } catch (HttpException $e) {
+                        if ($e->isDenial()) {
+                            // Denial → abandon the step (rethrow).
+                            throw $e;
+                        }
+                        // Transient upstream error → feed the error back to
+                        // the model; it may retry or work around.
+                        $callResult = ['ok' => false, 'error' => $e->getMessage()];
+                    }
+                } else {
+                    // Unknown/hallucinated tool → error result, no crash.
+                    $callResult = [
+                        'ok' => false,
+                        'error' => sprintf('Unknown tool "%s". Available tools: %s', $toolName, implode(', ', $this->toolNames($tools))),
+                    ];
                 }
+
+                // Cap the result before feeding back to the model.
+                $callResult = $budget->capResult($callResult, self::TOOL_RESULT_TOKEN_CAP);
 
                 $messages[] = [
                     'role' => 'tool',
-                    'tool_call_id' => (string) ($toolCall['id'] ?? ''),
+                    'tool_call_id' => $callId,
                     'content' => json_encode($callResult, JSON_THROW_ON_ERROR),
                 ];
             }
@@ -247,6 +355,108 @@ final class RunCommand extends Command
         // Submit the step result (revokes all event keys for this step).
         $client->complete($taskId, $stepId, $result);
         $output->writeln('<info>Step completed</info>');
+    }
+
+    /**
+     * Whether the tool name is in this step's toolbox (external schema list
+     * or internal registry). Protects against the model hallucinating tools.
+     *
+     * @param array<int, array<string, mixed>> $tools
+     */
+    private function isKnownTool(array $tools, string $toolName): bool
+    {
+        return in_array($toolName, $this->toolNames($tools), true);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $tools
+     *
+     * @return list<string>
+     */
+    private function toolNames(array $tools): array
+    {
+        $names = [];
+        foreach ($tools as $tool) {
+            if (is_string($tool['name'] ?? null)) {
+                $names[] = $tool['name'];
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * Token cost of the tool schemas sent with every request.
+     *
+     * @param array<int, array<string, mixed>> $tools
+     */
+    private function toolSchemaTokens(array $tools): int
+    {
+        $tokens = 0;
+        foreach ($tools as $tool) {
+            $tokens += strlen((string) json_encode($tool)) / 4;
+        }
+
+        return (int) $tokens;
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     *
+     * @return array{role: string, tool_call_id: string, content: string}
+     */
+    private function toolResultMessage(string $callId, array $result): array
+    {
+        return [
+            'role' => 'tool',
+            'tool_call_id' => $callId,
+            'content' => json_encode($result, JSON_THROW_ON_ERROR),
+        ];
+    }
+
+    /**
+     * Build the tool-call-results envelope for a final step (SPEC.md →
+     * Final-Step Input): every prior (non-final) step is one completed or
+     * failed tool call in a single batch. Failed steps carry an error, no
+     * result; completed ones carry their persisted result.
+     *
+     * @param array<string, mixed> $taskData
+     */
+    private function buildEnvelope(array $taskData): ?string
+    {
+        $entries = [];
+        $i = 0;
+        foreach (($taskData['steps'] ?? []) as $step) {
+            if (!is_array($step) || ($step['is_final'] ?? false)) {
+                continue;
+            }
+            $i++;
+            $name = (string) ($step['name'] ?? ('step ' . $i));
+            $status = (string) ($step['status'] ?? '');
+            $stepResult = $step['result'] ?? null;
+
+            if ($status === 'completed' && $stepResult !== null) {
+                $entries[] = [
+                    'tool_name' => 'step/' . $i,
+                    'arguments' => ['step' => $i, 'name' => $name],
+                    'result' => $stepResult,
+                    'status' => 'completed',
+                ];
+            } else {
+                $entries[] = [
+                    'tool_name' => 'step/' . $i,
+                    'arguments' => ['step' => $i, 'name' => $name],
+                    'error' => sprintf('step "%s" did not complete (status: %s)', $name, $status !== '' ? $status : 'unknown'),
+                    'status' => 'failed',
+                ];
+            }
+        }
+
+        if ($entries === []) {
+            return null;
+        }
+
+        return (string) json_encode(['tool_calls' => $entries], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     }
 
     /**
@@ -283,8 +493,8 @@ final class RunCommand extends Command
             : '';
 
         return sprintf(
-            "You are a TaskWeaver worker. You are running step \"%s\" (tags: %s).%s\n".
-            "You may call the tools provided below. They are executed by the controller on your behalf.\n".
+            "You are a TaskWeaver worker. You are running step \"%s\" (tags: %s).%s\n" .
+            "You may call the tools provided below. They are executed by the controller on your behalf.\n" .
             "Raw tool data may be noisy; interpret it and answer only what the step asked for.",
             $stepName,
             implode(', ', $stepTags),

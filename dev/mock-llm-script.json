@@ -1,0 +1,10 @@
+{
+    "comment": "Tool gauntlet script: call demo.echo, get a 500 (retry), call demo.random, call demo.time, then final summaries. Repeats last entry when exhausted.",
+    "entries": [
+        { "tool_calls": [ { "id": "c1", "function": { "name": "demo.echo", "arguments": "{\"message\":\"hello gauntlet\"}" } } ] },
+        { "status": 500 },
+        { "tool_calls": [ { "id": "c2", "function": { "name": "demo.random", "arguments": "{\"n\":5}" } } ] },
+        { "tool_calls": [ { "id": "c3", "function": { "name": "demo.time", "arguments": "{}" } } ] },
+        { "content": "Called demo.echo (got an echo + nonce back), demo.random (5 numbers between 0-1000), and demo.time (server time in several formats). All three demo tools responded successfully." }
+    ]
+}

@@ -34,6 +34,7 @@ final class ProvisionService
         private readonly string $llmUrl = 'http://llm:11434/v1',
         private readonly string $llmModel = 'llama3.1',
         private readonly ?string $systemPromptOverride = null,
+        private readonly bool $llmProxied = false,
     ) {
     }
 
@@ -67,7 +68,12 @@ final class ProvisionService
 
         $worker->setApiKey(KeyGenerator::generate());
         $worker->setConfig([
-            'llm_url' => $this->llmUrl,
+            'llm_url' => $this->llmProxied ? '/api/worker/llm' : $this->llmUrl,
+            // 'proxy' → the worker POSTs chat payloads to the controller and
+            // authenticates with its Tier-1 worker key (the controller holds
+            // the provider key). 'direct' → the worker talks to the local LLM
+            // itself, no auth needed. WORKER.md → The LLM channel.
+            'llm_auth' => $this->llmProxied ? 'proxy' : 'direct',
             'llm_model' => $this->llmModel,
             'system_prompt_override' => $this->systemPromptOverride,
             'step_timeout' => $this->stepTimeout,
@@ -104,8 +110,9 @@ final class ProvisionService
         $variantMap = [
             'php' => ['terminal', 'php'],
             'node' => ['terminal', 'node'],
-            // Local dev worker able to claim the seeded sample tasks.
-            'dev-worker' => ['terminal', 'echo', 'weather'],
+            // Local dev worker able to claim the seeded sample tasks
+            // (including the demo tool gauntlet).
+            'dev-worker' => ['terminal', 'echo', 'weather', 'demo-echo', 'demo-random', 'demo-time'],
         ];
 
         $image = $descriptor['image'] ?? '';

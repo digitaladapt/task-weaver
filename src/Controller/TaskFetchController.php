@@ -44,6 +44,11 @@ final class TaskFetchController extends AbstractController
                 'is_final' => $step->isFinal(),
                 'status' => $step->getStatus(),
                 'description' => $step->getDescription(),
+                // Prior-step results so a FINAL step can build its
+                // tool-call-results envelope (SPEC.md → Final-Step Input).
+                // Completed non-final steps carry their result; failed ones
+                // carry an error marker instead (no result is persisted).
+                'result' => $step->isFinal() ? null : $step->getResult(),
                 // External tool schemas for this step (tag-matched), only.
                 'tools' => $toolResolver->schemasForStep($step),
             ];

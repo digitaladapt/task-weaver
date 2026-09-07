@@ -86,8 +86,16 @@ composer install
 php bin/worker taskweaver:run \
   --controller http://127.0.0.1:8987 \
   --enrollment-token dev-enrollment-token \
+  --llm-url http://llm-host:11434/v1 \
+  --llm-model llama3.1 \
   --name dev-worker
 ```
+
+`--llm-url` is any OpenAI-compatible chat-completions endpoint (Ollama, vLLM,
+llama.cpp server). If the provision response carries `llm_auth`, the worker
+routes LLM traffic through the controller's `/api/worker/llm` proxy instead
+(see WORKER.md §3); `--once` runs a single claim cycle and exits — handy for
+testing.
 
 The worker provisions (Tier-0), claims tasks (Tier-1), runs its own LLM loop
 against the local model, and forwards external tool calls to TaskWeaver with an
@@ -101,13 +109,14 @@ The default descriptor requests the `dev-worker` image variant so the worker
 is provisioned with the tags (`terminal`, `echo`, `weather`) needed to claim
 the seeded sample tasks out of the box.
 
-> **Safety note (v1):** the `terminal` internal tool is currently a **stub
-> that echoes its command instead of executing it** — see `worker/src/Tool/
-> TerminalTool.php`. The real, sandboxed runner is a **v1 TODO** and must
-> be implemented before v1 is considered done; until then an LLM can never
-> run arbitrary commands through the reference worker.
+The `terminal` internal tool is a **real sandboxed runner**: commands execute
+via `proc_open` inside the worker container with a hard timeout and output
+cap. It's safe only because the worker container itself is the sandbox —
+no internet egress, no secrets, thrown away with the container. See
+`worker/src/Tool/TerminalTool.php`.
 
-Worker tests: `cd worker && vendor/bin/simple-phpunit`.
+Worker tests: `cd worker && vendor/bin/phpunit --configuration phpunit.dist.xml`
+(51 controller-side + 27 worker-side tests total across both suites).
 
 ## Worker API (controller side)
 
@@ -129,14 +138,19 @@ php vendor/bin/php-cs-fixer fix       # code style
 php bin/console doctrine:schema:validate
 php bin/console lint:twig templates   # template syntax
 
-# Tests (44 tests / 149 assertions) — PHPUnit ships via Symfony's bridge:
-vendor/bin/simple-phpunit
+# Tests (51 tests / 163 assertions):
+vendor/bin/phpunit --configuration phpunit.dist.xml
 ```
 
-Note: there is no `vendor/bin/phpunit` — PHPUnit is installed through the
-Symfony phpunit-bridge and run as `vendor/bin/simple-phpunit`.
+Tests run under `APP_ENV=test` with the in-memory SQLite from `.env.test`;
+CI does `cp .env.test .env` first to pin it for web requests.
 
 ## Deployment
+
+**Docker (not yet exercised):** `Dockerfile` (controller) and
+`docker/worker.Dockerfile` + `docker-compose.yml` (worker, hardened network —
+no internet egress, LLM on the private net, controller dual-NIC) are written
+but need a Docker-capable host to build and verify.
 
 Production is a standard Symfony app: inject the env vars from
 [`.env.example`](.env.example) (no dotenv file in prod), run
