@@ -5,8 +5,11 @@ set -e
 echo "Running doctrine migrations..."
 php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
 
-echo "Seeding sample data (idempotent)..."
-php bin/console app:seed || echo "seed skipped (already seeded?)"
+# Sample data is dev/test only; app:seed is a hard no-op with a warning
+# when APP_ENV=prod (guard lives in SeedCommand, so even a direct call
+# cannot seed a prod database).
+echo "Seeding sample data (idempotent, dev/test only)..."
+php bin/console app:seed
 
 echo "Warming prod cache..."
 php bin/console cache:warmup || true

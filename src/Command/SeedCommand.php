@@ -32,12 +32,18 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  *   bin/console app:seed
  *
  * Idempotent: bails out early if the dev-echo MCP server already exists.
+ *
+ * HARD NO-OP in production: sample data (including a terminal-tagged
+ * worker) must never be seeded into a prod database, even if invoked
+ * explicitly (entrypoint, fat-fingered cron, whatever). The command
+ * succeeds without doing anything and warns why.
  */
 #[AsCommand(name: 'app:seed', description: 'Seed sample tasks, worker, and event timeline for local development')]
 final class SeedCommand extends Command
 {
     public function __construct(
         private readonly EntityManagerInterface $em,
+        private readonly string $environment,
     ) {
         parent::__construct();
     }
@@ -45,6 +51,12 @@ final class SeedCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
+
+        if ('prod' === $this->environment) {
+            $io->warning('app:seed is dev/test only: APP_ENV=prod, seeding skipped (sample data is never seeded into a production database).');
+
+            return Command::SUCCESS;
+        }
 
         // Idempotent: if the dev-echo server already exists, bail out.
         $existing = $this->em->getRepository(McpServer::class)->findOneBy(['name' => 'dev-echo']);

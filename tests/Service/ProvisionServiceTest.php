@@ -48,13 +48,50 @@ final class ProvisionServiceTest extends TestCase
         self::assertContains('terminal', $result['internal_tools']);
     }
 
-    public function testBaseWorkerGetsTerminalOnly(): void
+    public function testUnknownWorkerIsALightWorkerWithNoImplicitCapabilities(): void
     {
         $result = $this->service()->provision('enrollment-token', 'base-worker', ['image' => 'taskweaver/worker:latest']);
 
-        // No variant matched -> base tags ['terminal'] + its internal tool.
+        // Unknown image + no declared capabilities -> no tags, no internal
+        // tools. The old behavior granted every unrecognized image the
+        // `terminal` tag; now a worker must tell us what it is.
+        self::assertSame([], $result['tags']);
+        self::assertSame([], $result['internal_tools']);
+    }
+
+    public function testLightWorkerEarnsOnlyDeclaredSanctionedCapabilities(): void
+    {
+        $result = $this->service()->provision('enrollment-token', 'custom-worker', [
+            'image' => 'registry.example.com/corp/runner:1.2',
+            'capabilities' => ['terminal', 'php'],
+        ]);
+
+        self::assertSame(['terminal', 'php'], $result['tags']);
+        self::assertSame(['terminal'], $result['internal_tools']);
+    }
+
+    public function testLightWorkerCapabilityDeclarationIsFiltered(): void
+    {
+        // Only sandbox capabilities are self-declarable; tool tags and
+        // junk are ignored even when declared.
+        $result = $this->service()->provision('enrollment-token', 'liar', [
+            'image' => 'registry.example.com/corp/runner:1.2',
+            'capabilities' => ['echo', 'weather', 'terminal', 'god-mode'],
+        ]);
+
         self::assertSame(['terminal'], $result['tags']);
         self::assertSame(['terminal'], $result['internal_tools']);
+    }
+
+    public function testLightWorkerStringCapabilitiesAreAccepted(): void
+    {
+        // Comma-separated string form (what the worker CLI sends).
+        $result = $this->service()->provision('enrollment-token', 'string-cap', [
+            'image' => 'registry.example.com/corp/runner:1.2',
+            'capabilities' => 'terminal,php',
+        ]);
+
+        self::assertSame(['terminal', 'php'], $result['tags']);
     }
 
     public function testInternalToolsNeverSelfDeclaredByDescriptor(): void
@@ -64,7 +101,8 @@ final class ProvisionServiceTest extends TestCase
         $result = $this->service()->provision('enrollment-token', 'liar', ['image' => 'x', 'internal_tools' => ['hack']]);
 
         self::assertNotContains('hack', $result['internal_tools']);
-        self::assertContains('terminal', $result['internal_tools']);
+        // Unknown image without declared capabilities → no terminal tool.
+        self::assertSame([], $result['internal_tools']);
     }
 
     public function testInvalidTokenRejected(): void
