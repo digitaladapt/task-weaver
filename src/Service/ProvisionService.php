@@ -7,6 +7,9 @@ namespace App\Service;
 use App\Entity\Worker;
 use App\Repository\WorkerRepository;
 use Doctrine\ORM\EntityManagerInterface;
+
+use function in_array;
+
 use InvalidArgumentException;
 
 /**
@@ -54,11 +57,12 @@ final class ProvisionService
             // `terminal`; variants add more (SPEC.md → Tech Stack → Workers).
             $tags = $this->assignTags($descriptor);
             $worker = new Worker($name, $tags);
-            $worker->setInternalTools([]); // v1: no internal tools yet
+            $worker->setInternalTools($this->assignInternalTools($tags));
             $this->em->persist($worker);
         } else {
-            // Re-provisioning: rotate the key, refresh config.
+            // Re-provisioning: rotate the key, refresh config/tags/tools.
             $worker->setTags($this->assignTags($descriptor));
+            $worker->setInternalTools($this->assignInternalTools($worker->getTags()));
         }
 
         $worker->setApiKey(KeyGenerator::generate());
@@ -112,5 +116,28 @@ final class ProvisionService
         }
 
         return ['terminal'];
+    }
+
+    /**
+     * Server-assigned internal tools, derived from the assigned tags.
+     * Internal tools are whatever the worker's sandbox image ships and the
+     * controller notes here at provision time (SPEC.md Internal Tools).
+     *
+     * A worker carrying the `terminal` tag can run the `terminal` internal
+     * tool locally; the controller notes it so the worker only ever exposes
+     * sanctioned capabilities (never self-declared).
+     *
+     * @param string[] $tags
+     *
+     * @return string[]
+     */
+    private function assignInternalTools(array $tags): array
+    {
+        $tools = [];
+        if (in_array('terminal', $tags, true)) {
+            $tools[] = 'terminal';
+        }
+
+        return $tools;
     }
 }

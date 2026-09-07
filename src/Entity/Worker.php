@@ -44,7 +44,8 @@ class Worker
 
     /**
      * Tool names the worker can execute locally (memory, reasoning, etc.).
-     * Noted at provisioning time. v1: empty — internal tools deferred.
+     * Noted at provisioning time; server-assigned, never self-declared.
+     * The reference worker ships `terminal` (a safety stub until v1).
      *
      * @var string[]
      */

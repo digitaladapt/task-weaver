@@ -97,6 +97,21 @@ final class ControllerClient
     }
 
     /**
+     * POST /api/worker/tool/internal — Tier-1 (worker key).
+     *
+     * Log a worker-executed internal tool call for the audit trail. The
+     * controller only records it; the worker itself ran the tool.
+     *
+     * @param array<string, mixed> $details
+     */
+    public function logInternalToolCall(string $eventId, string $tool, array $details = []): array
+    {
+        return $this->request('POST', '/api/worker/tool/internal', [
+            'json' => ['event_id' => $eventId, 'tool' => $tool, 'details' => $details],
+        ]);
+    }
+
+    /**
      * PATCH /api/worker/step/{taskId}/{stepId}/status — Tier-1.
      */
     public function markRunning(string $taskId, string $stepId): array

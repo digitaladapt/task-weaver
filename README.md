@@ -77,8 +77,8 @@ fire.
 ## Reference worker
 
 A self-contained worker lives in [`worker/`](worker/) (its own composer
-project). v1 scope: **external tools only** — internal `terminal` tools are
-deferred until core functionality is proven.
+project). It runs **external tools** via TaskWeaver's proxy and **internal
+(sandbox-local) tools** itself.
 
 ```bash
 cd worker
@@ -91,14 +91,23 @@ php bin/worker taskweaver:run \
 
 The worker provisions (Tier-0), claims tasks (Tier-1), runs its own LLM loop
 against the local model, and forwards external tool calls to TaskWeaver with an
-event-scoped key (Tier-2). It **abandons a step on any 401/403 denial** — no
-retry, no result report. (Point `--controller` at `http://127.0.0.1:8987` for
-the local dev server in the Quick start above, or at your deployed controller
-otherwise.)
+event-scoped key (Tier-2). **Internal tools** (sandbox-local, e.g. `terminal`)
+run in the worker and are logged back to the controller via `/tool/internal`.
+It **abandons a step on any 401/403 denial** — no retry, no result report.
+(Point `--controller` at `http://127.0.0.1:8987` for the local dev server in
+the Quick start above, or at your deployed controller otherwise.)
 
 The default descriptor requests the `dev-worker` image variant so the worker
 is provisioned with the tags (`terminal`, `echo`, `weather`) needed to claim
 the seeded sample tasks out of the box.
+
+> **Safety note (v1):** the `terminal` internal tool is currently a **stub
+> that echoes its command instead of executing it** — see `worker/src/Tool/
+> TerminalTool.php`. The real, sandboxed runner is a **v1 TODO** and must
+> be implemented before v1 is considered done; until then an LLM can never
+> run arbitrary commands through the reference worker.
+
+Worker tests: `cd worker && vendor/bin/simple-phpunit`.
 
 ## Worker API (controller side)
 
