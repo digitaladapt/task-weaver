@@ -8,7 +8,6 @@ use App\Entity\McpServer;
 use App\Entity\ToolDef;
 use App\MCP\OpenApiMcpClient;
 use App\MCP\OpenApiToolParser;
-
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use Symfony\Component\HttpClient\MockHttpClient;

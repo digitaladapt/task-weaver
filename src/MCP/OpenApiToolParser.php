@@ -108,8 +108,8 @@ final class OpenApiToolParser
     /**
      * @param array<string, mixed> $op
      * @param array<string, mixed> $components
-     * @param string              $method the HTTP method of this operation
-     * @param string              $path   the raw path template, e.g. "/repos/{owner}/{repo}"
+     * @param string               $method     the HTTP method of this operation
+     * @param string               $path       the raw path template, e.g. "/repos/{owner}/{repo}"
      *
      * @return array<string, mixed>
      */

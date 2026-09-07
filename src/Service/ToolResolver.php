@@ -8,6 +8,7 @@ use App\Entity\Step;
 use App\Entity\ToolDef;
 use Doctrine\ORM\EntityManagerInterface;
 
+use function is_string;
 use function sprintf;
 
 /**
