@@ -12,6 +12,9 @@ use function in_array;
 
 use InvalidArgumentException;
 
+use function is_array;
+use function is_string;
+
 /**
  * Worker provisioning (Tier-0 enrollment).
  *
@@ -41,7 +44,7 @@ final class ProvisionService
     /**
      * Validate the enrollment token and provision (or refresh) a worker.
      *
-     * @param array<string, string> $descriptor e.g. image name, requested tags hint
+     * @param array<string, mixed> $descriptor e.g. image name, declared capabilities (string or list)
      *
      * @return array{worker_id: string, api_key: string, tags: string[], internal_tools: string[], config: array<string, mixed>}
      */
@@ -96,10 +99,25 @@ final class ProvisionService
     }
 
     /**
-     * Server-assigned tags from the descriptor. The base image's `terminal`
-     * tag is always present; capability tags come from a server-side map.
+     * Server-assigned tags from the descriptor.
      *
-     * @param array<string, string> $descriptor
+     * Two paths to capabilities (both still server-decided — the worker can
+     * only ASK, the controller decides):
+     *
+     *  1. Known image variants get their tags from the server-side map.
+     *  2. An unknown image is a "light worker": NO implicit capabilities.
+     *     It only earns tags it explicitly declares in its descriptor
+     *     (`capabilities: [terminal, php]`) — and only from the set the
+     *     controller sanctions for self-declaration (sandbox capabilities
+     *     the worker image actually ships, e.g. terminal/php/node). Tool
+     *     tags (echo, weather, …) are never self-declarable; those describe
+     *     what tasks the worker may claim, not what its sandbox can do.
+     *
+     * The old behavior — every unrecognized image fell back to
+     * ['terminal'] — silently granted the terminal internal tool to any
+     * worker we know nothing about. No more presumption.
+     *
+     * @param array<string, mixed> $descriptor
      *
      * @return string[]
      */
@@ -115,14 +133,29 @@ final class ProvisionService
             'dev-worker' => ['terminal', 'echo', 'weather', 'demo-echo', 'demo-random', 'demo-time'],
         ];
 
-        $image = $descriptor['image'] ?? '';
+        $image = (string) ($descriptor['image'] ?? '');
         foreach ($variantMap as $variant => $tags) {
             if (str_contains($image, $variant)) {
                 return $tags;
             }
         }
 
-        return ['terminal'];
+        // Unknown image: light worker. Trust only explicitly declared
+        // sandbox capabilities, intersected with the sanctioned set.
+        $declared = $descriptor['capabilities'] ?? [];
+        if (is_string($declared)) {
+            $declared = array_filter(array_map('trim', explode(',', $declared)));
+        }
+        if (!is_array($declared)) {
+            $declared = [];
+        }
+
+        // Sandbox capabilities a light worker may declare for itself.
+        // Deliberately narrow: anything not here must come from a known
+        // image variant (server-side map).
+        $selfDeclarable = ['terminal', 'php', 'node'];
+
+        return array_values(array_intersect($selfDeclarable, $declared));
     }
 
     /**

@@ -50,6 +50,8 @@ final class RunCommand extends Command
             ->addOption('controller', null, InputOption::VALUE_REQUIRED, 'Controller base URL', getenv('TASKWEAVER_CONTROLLER_URL') ?: 'http://localhost:8000')
             ->addOption('enrollment-token', null, InputOption::VALUE_REQUIRED, 'Tier-0 enrollment token', getenv('TASKWEAVER_ENROLLMENT_TOKEN') ?: '')
             ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Worker name', getenv('WORKER_NAME') ?: 'dev-worker')
+            ->addOption('image', null, InputOption::VALUE_REQUIRED, 'Image identity reported to the controller at provision time', getenv('TASKWEAVER_WORKER_IMAGE') ?: 'taskweaver/dev-worker:latest')
+            ->addOption('capabilities', null, InputOption::VALUE_REQUIRED, 'Comma-separated sandbox capabilities this worker declares (e.g. terminal,php) — only honored for unknown images', getenv('WORKER_CAPABILITIES') ?: '')
             ->addOption('llm-url', null, InputOption::VALUE_REQUIRED, 'Local LLM base URL', getenv('TASKWEAVER_LLM_URL') ?: 'http://llm:11434/v1')
             ->addOption('llm-model', null, InputOption::VALUE_REQUIRED, 'Local LLM model', getenv('TASKWEAVER_LLM_MODEL') ?: 'llama3.1')
             ->addOption('once', null, InputOption::VALUE_NONE, 'Claim and run one task, then exit')
@@ -69,11 +71,18 @@ final class RunCommand extends Command
         // --- Boot / provision ---
         $client = new ControllerClient($controller, $token);
 
-        // Default descriptor uses the `dev-worker` variant so the controller
-        // provisions this worker with the tags needed to claim the seeded
-        // sample tasks (echo, weather). Swap the image for the variant you
-        // actually run (e.g. taskweaver/worker:latest -> terminal only).
-        $provisioned = $client->provision($name, ['image' => 'taskweaver/dev-worker:latest']);
+        // Descriptor: image identity + explicitly declared sandbox
+        // capabilities. Known variants (e.g. taskweaver/dev-worker) get
+        // server-mapped tags; unknown images are light workers that only
+        // get the capabilities they declare here. The worker never chooses
+        // its own tags — it can only declare what its sandbox ships.
+        $descriptor = ['image' => $image];
+        $capabilities = array_filter(array_map('trim', explode(',', $capabilities)));
+        if ($capabilities !== []) {
+            $descriptor['capabilities'] = $capabilities;
+        }
+
+        $provisioned = $client->provision($name, $descriptor);
         $output->writeln(sprintf('Provisioned worker %s (tags: %s)', $provisioned['worker_id'] ?? '?', implode(',', $provisioned['tags'] ?? [])));
 
         $config = is_array($provisioned['config'] ?? null) ? $provisioned['config'] : [];

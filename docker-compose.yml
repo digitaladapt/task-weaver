@@ -12,9 +12,15 @@
 # blast-radius boundary is the network.
 #
 # Usage:
+#   cp .env.example .env      # compose reads .env from this directory
+#   edit .env                 # set APP_SECRET + TASKWEAVER_ENROLLMENT_TOKEN
 #   docker compose build
 #   docker compose up -d
 #   → admin UI: http://localhost:8080
+#
+# The compose file is environment-agnostic: every value comes from the
+# environment (a .env file next to it, or real env vars in prod). Core
+# secrets use the ":?" form — compose REFUSES to start if they are missing.
 #
 # The worker provisions itself on boot using TASKWEAVER_ENROLLMENT_TOKEN
 # (must match the controller's env value).
@@ -25,13 +31,17 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      APP_SECRET: change-me
-      TASKWEAVER_ENROLLMENT_TOKEN: dev-enrollment-token
-      TASKWEAVER_LLM_URL: http://llm:11434/v1
-      TASKWEAVER_LLM_MODEL: llama3.1
+      APP_ENV: ${APP_ENV:-prod}
+      # Core secrets — required, no defaults. Generate with:
+      #   php -r "echo bin2hex(random_bytes(32));"
+      APP_SECRET: ${APP_SECRET:?APP_SECRET is required — copy .env.example to .env and set it}
+      TASKWEAVER_ENROLLMENT_TOKEN: ${TASKWEAVER_ENROLLMENT_TOKEN:?TASKWEAVER_ENROLLMENT_TOKEN is required — copy .env.example to .env and set it}
+      TASKWEAVER_LLM_URL: ${TASKWEAVER_LLM_URL:-http://llm:11434/v1}
+      TASKWEAVER_LLM_MODEL: ${TASKWEAVER_LLM_MODEL:-llama3.1}
+      TASKWEAVER_TIMEZONE: ${TASKWEAVER_TIMEZONE:-}
       # Set TASKWEAVER_LLM_API_KEY to switch workers to the proxied channel
       # (workers then send LLM traffic via the controller's /api/worker/llm).
-      TASKWEAVER_LLM_API_KEY: ""
+      TASKWEAVER_LLM_API_KEY: ${TASKWEAVER_LLM_API_KEY:-}
     volumes:
       - controller-data:/var/www/html/var/data
     ports:
@@ -47,8 +57,13 @@ services:
       dockerfile: docker/worker.Dockerfile
     environment:
       TASKWEAVER_CONTROLLER_URL: http://controller:80
-      TASKWEAVER_ENROLLMENT_TOKEN: dev-enrollment-token
-      WORKER_NAME: worker-1
+      TASKWEAVER_ENROLLMENT_TOKEN: ${TASKWEAVER_ENROLLMENT_TOKEN:?TASKWEAVER_ENROLLMENT_TOKEN is required — copy .env.example to .env and set it}
+      WORKER_NAME: ${WORKER_NAME:-worker-1}
+      # Descriptor identity reported at provision time. Known images get
+      # server-mapped tags; unknown images are "light workers" that must
+      # declare their capabilities to be trusted with anything.
+      TASKWEAVER_WORKER_IMAGE: ${TASKWEAVER_WORKER_IMAGE:-taskweaver/dev-worker:latest}
+      WORKER_CAPABILITIES: ${WORKER_CAPABILITIES:-}
     # --- WORKER.md §2 hardening ---
     read_only: true
     cap_drop: [ALL]
