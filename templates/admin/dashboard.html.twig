@@ -121,4 +121,23 @@
             {% endif %}
         </div>
     </div>
+
+    <div class="logout-footer">
+        <button id="logout-btn" class="btn btn-ghost btn-small" type="button">Log out</button>
+    </div>
+{% endblock %}
+
+{% block javascripts %}
+    <script>
+    (function () {
+        'use strict';
+        var logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', function () {
+                localStorage.removeItem('taskweaver_api_key');
+                window.location.href = '/login';
+            });
+        }
+    })();
+    </script>
 {% endblock %}
