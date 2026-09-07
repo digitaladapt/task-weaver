@@ -30,14 +30,7 @@
             <tbody>
             {% for task in tasks %}
                 <tr>
-                    <td>
-                        <a href="{{ path('app_task_show', {id: task.id}) }}">{{ task.name }}</a>
-                        {% if task.schedule is null and task.status != 'running' %}
-                            <form method="post" action="{{ path('app_task_run', {id: task.id}) }}" class="inline">
-                                <button type="submit" class="btn btn-small">Run</button>
-                            </form>
-                        {% endif %}
-                    </td>
+                    <td><a href="{{ path('app_task_show', {id: task.id}) }}">{{ task.name }}</a></td>
                     <td><span class="badge status-{{ task.status }}">{{ task.status }}</span></td>
                     <td>{{ task.priority }}</td>
                     <td>{{ task.steps|length }}</td>
