@@ -27,6 +27,24 @@ final class ContextBudgetTest extends TestCase
         self::assertSame(1000, $budget->maxTokens());
     }
 
+    public function testEstimatesAndCapsInvalidUtf8ToolResults(): void
+    {
+        // Regression (found by the real-LLM dev rig): terminal tool output
+        // can carry non-UTF-8 bytes. Estimation and capping must not throw
+        // or silently return empty (which zeroed the token estimate).
+        $result = ['ok' => true, 'output' => "bad \xB1\x31 bytes"];
+
+        $budget = new ContextBudget(6000, 1500);
+
+        $messageTokens = $budget->estimateMessageTokens(['role' => 'tool', 'content' => $result['output']]);
+        $resultTokens = $budget->estimateResultTokens($result);
+        $capped = $budget->capResult($result, 1000);
+
+        self::assertGreaterThan(0, $messageTokens);
+        self::assertGreaterThan(0, $resultTokens);
+        self::assertSame($result, $capped);
+    }
+
     public function testCapResultLeavesSmallResultsAlone(): void
     {
         $budget = ContextBudget::fromConfig([]);
