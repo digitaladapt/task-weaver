@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Setup · TaskWeaver</title>
+    <style>
+        :root {
+            --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --border: #2a2f3a;
+            --text: #e6e9ef; --muted: #9aa3b2; --accent: #4f8cff; --green: #3fb950; --red: #f85149;
+            --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; background: var(--bg); color: var(--text);
+            font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px;
+        }
+        .card {
+            background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+            padding: 32px; max-width: 460px; width: 100%; text-align: center;
+        }
+        .logo { font-size: 40px; margin-bottom: 8px; }
+        h1 { font-size: 20px; margin: 0 0 6px; }
+        p.lead { color: var(--muted); margin: 0 0 24px; }
+        .btn {
+            display: inline-block; padding: 10px 18px; border-radius: 6px; font-size: 14px; font-weight: 600;
+            border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer;
+        }
+        .btn:hover { filter: brightness(1.15); }
+        .btn:disabled { opacity: .6; cursor: wait; }
+        .key-result { display: none; margin-top: 24px; text-align: left; }
+        .key-box {
+            background: var(--panel-2); border: 1px solid var(--green); border-radius: 6px;
+            padding: 12px; font-family: var(--mono); font-size: 12px; word-break: break-all;
+            color: var(--green); margin-bottom: 12px; user-select: all;
+        }
+        .hint { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+        .error { display: none; background: rgba(248,81,73,.12); border: 1px solid var(--red);
+                 color: var(--red); padding: 10px; border-radius: 6px; margin-top: 16px; font-size: 13px; }
+        a.go { color: var(--accent); font-weight: 600; text-decoration: none; }
+        a.go:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">🕸️</div>
+        <h1>Welcome to TaskWeaver</h1>
+        <p class="lead">First run: generate the admin API key for the web UI.</p>
+
+        <button id="setup-btn" class="btn">Generate API key</button>
+
+        <div id="key-result" class="key-result">
+            <div class="key-box" id="key-display"></div>
+            <p class="hint">Copy this key and keep it safe — it is shown <strong>only once</strong>.
+                The browser stores it in localStorage after login, so you won't need to re-enter it.</p>
+            <a href="/login" class="go">Continue to login →</a>
+        </div>
+
+        <div id="setup-error" class="error"></div>
+    </div>
+
+    <script>
+        document.getElementById('setup-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('setup-btn');
+            const err = document.getElementById('setup-error');
+            btn.disabled = true;
+            btn.textContent = 'Generating…';
+
+            try {
+                const res = await fetch('{{ path('api_auth_setup') }}', { method: 'POST' });
+                const data = await res.json();
+
+                if (res.ok && data.api_key) {
+                    document.getElementById('key-display').textContent = data.api_key;
+                    document.getElementById('key-result').style.display = 'block';
+                    btn.style.display = 'none';
+                } else {
+                    err.textContent = data.error || 'Setup failed. Has it already been run?';
+                    err.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Generate API key';
+                }
+            } catch (e) {
+                err.textContent = 'Network error: ' + e.message;
+                err.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Generate API key';
+            }
+        });
+    </script>
+</body>
+</html>

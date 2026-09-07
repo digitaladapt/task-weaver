@@ -9,6 +9,7 @@
         <span class="spacer"></span>
         <a class="btn" href="{{ path('app_tool_server_edit', {id: server.id}) }}">Edit</a>
         <form method="post" action="{{ path('app_tool_server_sync', {id: server.id}) }}" class="inline" onsubmit="return confirm('Re-sync tool definitions from the server?\\n\\nExisting tools keep their manual tags; new tools are created; tools that vanished are flagged removed.');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
             <button type="submit" class="btn btn-primary">Sync Now</button>
         </form>
     </div>
@@ -33,6 +34,7 @@
     </div>
 
     <form method="post" action="{{ path('app_tool_server_save_tags', {id: server.id}) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
         <div class="panel">
             <div class="panel-head">
                 <h3>Tool Definitions</h3>
@@ -104,6 +106,7 @@
 
     <div class="delete-zone" style="margin-top:8px; padding-top:20px; border-top:1px solid var(--border); text-align:center;">
         <form method="post" action="{{ path('app_tool_server_delete', {id: server.id}) }}" class="inline" onsubmit="return confirm('Delete this MCP server and ALL its tool definitions?\\n\\nThis cannot be undone.');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
             <button type="submit" class="btn btn-danger">Delete Server</button>
         </form>
     </div>

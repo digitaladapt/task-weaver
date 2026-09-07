@@ -4,6 +4,7 @@
 
 {% block body %}
     <form method="post" action="{% if is_new %}{{ path('app_tool_server_new') }}{% else %}{{ path('app_tool_server_edit', {id: server.id}) }}{% endif %}" class="server-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
         <div class="form-head">
             {% if is_new %}
                 <a href="{{ path('app_tools') }}" class="btn btn-ghost">Cancel</a>
@@ -88,6 +89,7 @@
     {% if not is_new %}
         <div class="delete-zone">
             <form method="post" action="{{ path('app_tool_server_delete', {id: server.id}) }}" class="inline" onsubmit="return confirm('Delete this MCP server and ALL its tool definitions?\\n\\nThis cannot be undone.');">
+                <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
                 <button type="submit" class="btn btn-danger">Delete Server</button>
             </form>
         </div>
@@ -175,6 +177,7 @@
 
         const body = new URLSearchParams();
         body.set('name', document.getElementById('server-name')?.value || '');
+        body.set('_csrf', '{{ csrf_token('admin') }}');
         body.set('endpoint', endpoint);
         body.set('transport', document.getElementById('server-transport')?.value || 'openapi');
         body.set('enabled', document.querySelector('[name="enabled"]')?.checked ? '1' : '');

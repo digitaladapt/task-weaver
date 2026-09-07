@@ -8,6 +8,7 @@
         <span class="spacer"></span>
         {% if task.status != 'running' %}
         <form method="post" action="{{ path('app_task_run', {id: task.id}) }}" class="inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
             <button type="submit" class="btn btn-primary">Run</button>
         </form>
         {% endif %}

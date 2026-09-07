@@ -16,6 +16,9 @@
         <server name="APP_ENV" value="test" force="true" />
         <server name="SHELL_VERBOSITY" value="-1" />
         <server name="KERNEL_CLASS" value="App\Kernel" />
+        <!-- Functional tests need a persistent file DB (in-memory SQLite
+             resets per connection and can't hold schema across boots). -->
+        <server name="DATABASE_URL" value="sqlite:///%kernel.project_dir%/var/data/test.db" force="true" />
     </php>
 
     <testsuites>

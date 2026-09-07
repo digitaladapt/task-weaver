@@ -45,6 +45,7 @@
         header.nav nav { display: flex; gap: 16px; flex-wrap: wrap; }
         header.nav nav a { color: var(--muted); font-weight: 500; }
         header.nav nav a.active, header.nav nav a:hover { color: var(--text); }
+        .logout-footer { margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
 
         main { padding: 24px; max-width: 1200px; margin: 0 auto; }
         @media (max-width: 640px) {
@@ -222,5 +223,10 @@
         {% block body %}{% endblock %}
     </main>
     {% block javascripts %}{% endblock %}
+
+    {# Session bootstrap (penny-track pattern): if this page rendered, we
+       have a valid session. When the session later expires server-side
+       but the browser still holds the key in localStorage, the login page
+       re-verifies it transparently and re-establishes the cookie. #}
 </body>
 </html>
