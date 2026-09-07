@@ -347,7 +347,10 @@ final class RunCommand extends Command
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $callId,
-                    'content' => json_encode($callResult, JSON_THROW_ON_ERROR),
+                    // JSON_INVALID_UTF8_SUBSTITUTE: tool output (esp. the
+                    // terminal tool) can carry non-UTF-8 bytes; substitute
+                    // U+FFFD instead of failing the whole step.
+                    'content' => json_encode($callResult, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
                 ];
             }
         }
@@ -410,7 +413,7 @@ final class RunCommand extends Command
         return [
             'role' => 'tool',
             'tool_call_id' => $callId,
-            'content' => json_encode($result, JSON_THROW_ON_ERROR),
+            'content' => json_encode($result, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
         ];
     }
 
@@ -456,7 +459,7 @@ final class RunCommand extends Command
             return null;
         }
 
-        return (string) json_encode(['tool_calls' => $entries], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        return (string) (json_encode(['tool_calls' => $entries], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) ?: '');
     }
 
     /**

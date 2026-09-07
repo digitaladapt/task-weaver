@@ -60,7 +60,7 @@ final class ContextBudget
      */
     public function estimateMessageTokens(array $message): int
     {
-        return $this->estimateTokens((string) json_encode($message) ?: '');
+        return $this->estimateTokens((string) (json_encode($message, JSON_INVALID_UTF8_SUBSTITUTE) ?: ''));
     }
 
     /**
@@ -68,7 +68,7 @@ final class ContextBudget
      */
     public function estimateResultTokens(array $result): int
     {
-        return $this->estimateTokens((string) json_encode($result) ?: '');
+        return $this->estimateTokens((string) (json_encode($result, JSON_INVALID_UTF8_SUBSTITUTE) ?: ''));
     }
 
     /**
@@ -83,7 +83,7 @@ final class ContextBudget
      */
     public function capResult(array $result, int $maxTokens): array
     {
-        $encoded = (string) (json_encode($result) ?: '{}');
+        $encoded = (string) (json_encode($result, JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}');
         if ($this->estimateTokens($encoded) <= $maxTokens) {
             return $result;
         }
@@ -92,7 +92,7 @@ final class ContextBudget
         // whole payload if still over.
         $capped = $this->truncateStrings($result, max(64, $maxTokens * 2));
 
-        $encoded = (string) (json_encode($capped) ?: '{}');
+        $encoded = (string) (json_encode($capped, JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}');
         if ($this->estimateTokens($encoded) <= $maxTokens) {
             return $capped;
         }
