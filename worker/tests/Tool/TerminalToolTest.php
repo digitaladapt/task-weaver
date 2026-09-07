@@ -27,17 +27,25 @@ final class TerminalToolTest extends TestCase
     public function testEchoStubNeverExecutes(): void
     {
         $tool = new TerminalTool();
-        // This command would be catastrophic if actually run. The stub MUST
-        // echo it back and NOT execute it.
-        $result = $tool->run(['command' => 'rm -rf / && touch /tmp/terminal-ran']);
+
+        // A benign probe command. If the safety stub is ever replaced by a real
+        // runner, this test must FAIL loudly (the probe command must not be
+        // executed). Never use a destructive command like `rm -rf /` here:
+        // the moment execution is wired up, this test would destroy the
+        // sandbox before it can fail.
+        $marker = sys_get_temp_dir() . '/taskweaver-terminal-ran-' . bin2hex(random_bytes(6));
+        $command = 'printf ran > ' . escapeshellarg($marker);
+
+        $result = $tool->run(['command' => $command]);
 
         self::assertTrue($result['ok']);
-        self::assertStringContainsString('rm -rf /', $result['output']);
         self::assertStringContainsString('not executed', $result['output']);
         self::assertStringContainsString('TODO', $result['output']);
+        // The stub echoed the command back verbatim.
+        self::assertStringContainsString($command, $result['output']);
 
-        // Prove nothing ran: the marker file must not exist.
-        self::assertFileDoesNotExist('/tmp/terminal-ran');
+        // Prove nothing actually ran: the marker file must not exist.
+        self::assertFileDoesNotExist($marker);
     }
 
     public function testMissingCommandRejected(): void
