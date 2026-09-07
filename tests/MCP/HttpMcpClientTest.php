@@ -7,6 +7,9 @@ namespace App\Tests\MCP;
 use App\Entity\McpServer;
 use App\Entity\ToolDef;
 use App\MCP\HttpMcpClient;
+
+use function is_string;
+
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use Symfony\Component\HttpClient\MockHttpClient;
@@ -48,7 +51,7 @@ final class HttpMcpClientTest extends TestCase
         $requests = [];
         $i = 0;
         $responses = [$this->initResponse('sess-123'), $list];
-        $httpClient = new MockHttpClient(function (string $method, string $url, array $options) use (&$requests, &$i, $responses) {
+        $httpClient = new MockHttpClient(static function (string $method, string $url, array $options) use (&$requests, &$i, $responses) {
             $requests[] = ['method' => $method, 'options' => $options];
             $response = $responses[$i] ?? null;
             ++$i;
@@ -92,7 +95,7 @@ final class HttpMcpClientTest extends TestCase
         $requests = [];
         $i = 0;
         $responses = [$this->initResponse('sess-xyz'), $call];
-        $httpClient = new MockHttpClient(function (string $method, string $url, array $options) use (&$requests, &$i, $responses) {
+        $httpClient = new MockHttpClient(static function (string $method, string $url, array $options) use (&$requests, &$i, $responses) {
             $requests[] = ['method' => $method, 'options' => $options];
             $response = $responses[$i] ?? null;
             ++$i;

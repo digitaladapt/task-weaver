@@ -12,8 +12,10 @@ use App\Service\TimezoneService;
 use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\ORM\EntityManagerInterface;
+use LogicException;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
+use ReflectionMethod;
 use Symfony\Component\Messenger\MessageBusInterface;
 
 /**
@@ -226,7 +228,7 @@ class SchedulerServiceTest extends TestCase
 
         // The tick path is covered by the kernel-level completion test; here
         // we verify the reset semantics directly.
-        $ref = new \ReflectionMethod(SchedulerService::class, 'resetStepsForNextRun');
+        $ref = new ReflectionMethod(SchedulerService::class, 'resetStepsForNextRun');
         $ref->setAccessible(true);
         $ref->invoke($scheduler, $task);
 
@@ -304,7 +306,7 @@ class SchedulerServiceTest extends TestCase
         $step->setStatus(Step::STATUS_RUNNING);
         $task->addStep($step);
 
-        $this->expectException(\LogicException::class);
+        $this->expectException(LogicException::class);
         $this->workflow()->resetForRun($task);
     }
 }

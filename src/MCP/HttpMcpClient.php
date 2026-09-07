@@ -15,6 +15,7 @@ use RuntimeException;
 
 use function sprintf;
 
+use stdClass;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Throwable;
 
@@ -45,7 +46,7 @@ final class HttpMcpClient implements McpClientInterface
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'tools/list',
-            'params' => new \stdClass(),
+            'params' => new stdClass(),
         ];
 
         try {
@@ -178,7 +179,7 @@ final class HttpMcpClient implements McpClientInterface
             'method' => 'initialize',
             'params' => [
                 'protocolVersion' => '2025-03-26',
-                'capabilities' => new \stdClass(),
+                'capabilities' => new stdClass(),
                 'clientInfo' => [
                     'name' => 'taskweaver',
                     'version' => '0.1.0',
@@ -196,11 +197,7 @@ final class HttpMcpClient implements McpClientInterface
         $body = $response->getContent(false);
 
         if ($status >= 400) {
-            throw new RuntimeException(sprintf(
-                'MCP initialize failed: server responded %d: %s',
-                $status,
-                $this->scrub($body),
-            ));
+            throw new RuntimeException(sprintf('MCP initialize failed: server responded %d: %s', $status, $this->scrub($body)));
         }
 
         // Fail loudly on an error frame so a broken handshake isn't masked.

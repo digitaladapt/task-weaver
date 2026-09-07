@@ -54,11 +54,7 @@ final class TaskWorkflowService
 
         foreach ($task->getSteps() as $step) {
             if (Step::STATUS_RUNNING === $step->getStatus()) {
-                throw new LogicException(sprintf(
-                    'Task %s cannot be re-run while step %s is running.',
-                    $task->getId()->toRfc4122(),
-                    $step->getId()->toRfc4122(),
-                ));
+                throw new LogicException(sprintf('Task %s cannot be re-run while step %s is running.', $task->getId()->toRfc4122(), $step->getId()->toRfc4122()));
             }
 
             if (Step::STATUS_PENDING === $step->getStatus()) {

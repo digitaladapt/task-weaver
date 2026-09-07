@@ -20,11 +20,14 @@ use function array_values;
 use function count;
 
 use Cron\CronExpression;
+use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
-use LogicException;
 
 use function explode;
 use function is_array;
+
+use LogicException;
+
 use function max;
 use function sort;
 
@@ -220,7 +223,7 @@ final class TaskController extends AbstractController
         // of staying blank until the next scheduler tick. One-shot tasks keep
         // a nil next run (they run on demand via /tasks/{id}/run).
         if (null !== $task->getSchedule()) {
-            $task->setNextRunAt($this->scheduler->nextRunAt($task, new \DateTimeImmutable()));
+            $task->setNextRunAt($this->scheduler->nextRunAt($task, new DateTimeImmutable()));
         }
 
         $raw = $data['steps'] ?? [];

@@ -14,9 +14,10 @@ use function array_values;
 use function count;
 use function in_array;
 use function is_array;
-use function trim;
 
 use Throwable;
+
+use function trim;
 
 /**
  * Runs a "test connection" against an MCP server from raw form data,

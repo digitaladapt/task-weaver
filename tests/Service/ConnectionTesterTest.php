@@ -13,6 +13,7 @@ use App\MCP\McpClientRegistry;
 use App\MCP\ToolResult;
 use App\Service\ConnectionTester;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 final class FakeTestConnectionClient implements McpClientInterface
 {
@@ -33,7 +34,7 @@ final class FakeTestConnectionClient implements McpClientInterface
     public function listTools(McpServer $server, array $env): array
     {
         if ($this->fail) {
-            throw new \RuntimeException($this->err);
+            throw new RuntimeException($this->err);
         }
 
         return [
@@ -62,7 +63,7 @@ final class ConnectionTesterTest extends TestCase
             'cred_vars' => [],
         ]);
 
-        self::assertSame(true, $result['ok']);
+        self::assertTrue($result['ok']);
         self::assertSame(2, $result['tools']);
         self::assertSame(['log', 'log_read'], $result['names']);
     }
@@ -76,7 +77,7 @@ final class ConnectionTesterTest extends TestCase
             'cred_vars' => [],
         ]);
 
-        self::assertSame(false, $result['ok']);
+        self::assertFalse($result['ok']);
         self::assertSame('connection refused', $result['error']);
     }
 
@@ -89,7 +90,7 @@ final class ConnectionTesterTest extends TestCase
             'cred_vars' => [],
         ]);
 
-        self::assertSame(false, $result['ok']);
+        self::assertFalse($result['ok']);
         self::assertSame('Endpoint is required.', $result['error']);
     }
 
@@ -102,7 +103,7 @@ final class ConnectionTesterTest extends TestCase
             'cred_vars' => [],
         ]);
 
-        self::assertSame(false, $result['ok']);
+        self::assertFalse($result['ok']);
         self::assertSame('Unsupported transport.', $result['error']);
     }
 }
