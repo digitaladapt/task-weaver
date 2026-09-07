@@ -1,6 +1,6 @@
 {
     "name": "taskweaver/worker",
-    "description": "TaskWeaver reference worker — sandboxed LLM runner (v1: external tools only, no internal terminal tools)",
+    "description": "TaskWeaver reference worker — sandboxed LLM runner (external tool proxy + internal sandbox tools; terminal is a safety stub until v1)",
     "type": "project",
     "license": "proprietary",
     "require": {
@@ -10,6 +10,7 @@
         "symfony/console": "^7.2"
     },
     "require-dev": {
+        "phpunit/phpunit": "^13.2",
         "symfony/dotenv": "^7.2"
     },
     "autoload": {

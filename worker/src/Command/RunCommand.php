@@ -11,13 +11,18 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use TaskWeaverWorker\ControllerClient;
 use TaskWeaverWorker\LlmClient;
+use function in_array;
+use TaskWeaverWorker\Tool\InternalToolRegistry;
+use TaskWeaverWorker\Tool\TerminalTool;
 
 /**
  * Reference worker run loop.
  *
- * v1 scope: EXTERNAL tools only. The worker forwards every tool call to
- * TaskWeaver (the tool proxy) and records internal tools as a no-op — the
- * `terminal` internal tool is NOT supported yet (per initial-setup scope).
+ * v1 scope: EXTERNAL tools are forwarded to TaskWeaver (the tool proxy);
+ * INTERNAL tools (sandbox-local) run in the worker and are logged back to
+ * the controller via /tool/internal. The `terminal` internal tool is a
+ * SAFETY STUB that echoes its command instead of executing (see
+ * TerminalTool docblock) — TODO wired to the real runner before v1 is done.
  *
  * Lifecycle per WORKER.md §5:
  *   boot → provision → loop { claim → fetch → [per step: running →
@@ -86,6 +91,20 @@ final class RunCommand extends Command
         $llm = new LlmClient((string) $llmUrl, (string) $llmModel);
         $output->writeln(sprintf('LLM endpoint: %s (model: %s)', $llmUrl, $llmModel));
 
+        // Internal (sandbox-local) tools this worker ships. v1 ships only the
+        // `terminal` safety stub (echo-only — see TerminalTool docblock).
+        // We only expose the tools the controller SANCTIONED at provision
+        // (WORKER.md §5: capabilities are server-assigned, never self-declared).
+        $sanctioned = is_array($provisioned['internal_tools'] ?? null) ? $provisioned['internal_tools'] : [];
+        $internalTools = new InternalToolRegistry();
+        $allInternal = [new TerminalTool()];
+        foreach ($allInternal as $tool) {
+            if (in_array($tool->name(), $sanctioned, true)) {
+                $internalTools->register($tool);
+            }
+        }
+        $output->writeln(sprintf('Internal tools (sanctioned): %s', implode(', ', $internalTools->names()) ?: '(none)'));
+
         do {
             try {
                 $claimed = $client->claim();
@@ -114,7 +133,7 @@ final class RunCommand extends Command
             $output->writeln(sprintf('Claimed task %s step %s', $taskId, $stepId));
 
             try {
-                $this->runStep($client, $llm, $taskId, $stepId, $output);
+                $this->runStep($client, $llm, $internalTools, $taskId, $stepId, $output);
             } catch (HttpException $e) {
                 if ($e->isDenial()) {
                     // Abandon-on-denial: the step's fate is already decided
@@ -131,7 +150,7 @@ final class RunCommand extends Command
         } while (true);
     }
 
-    private function runStep(ControllerClient $client, LlmClient $llm, string $taskId, string $stepId, OutputInterface $output): void
+    private function runStep(ControllerClient $client, LlmClient $llm, InternalToolRegistry $internalTools, string $taskId, string $stepId, OutputInterface $output): void
     {
         // Fetch task + schema, then mark running.
         $taskData = $client->fetchTask($taskId);
@@ -150,8 +169,10 @@ final class RunCommand extends Command
         $eventKey = (string) $event['api_key'];
         $output->writeln(sprintf('Event %s registered', $eventId));
 
-        // Build the step context.
+        // Build the step context: external tools come from the controller's
+        // tag-matched schemas; internal tools are this worker's own registry.
         $tools = is_array($stepData['tools'] ?? null) ? $stepData['tools'] : [];
+        $tools = array_merge($tools, $internalTools->schemas());
         $stepTags = is_array($stepData['tags'] ?? null) ? $stepData['tags'] : [];
         $stepName = (string) ($stepData['name'] ?? 'step');
         $stepDescription = (string) ($stepData['description'] ?? '');
@@ -164,8 +185,9 @@ final class RunCommand extends Command
             ['role' => 'user', 'content' => $grounding . "\n\n" . $stepDescription],
         ];
 
-        // LLM tool loop (v1: external tools only, all forwarded to TaskWeaver).
-        $result = ['summary' => sprintf('Step "%s" ran with %d external tools available.', $stepName, count($tools))];
+        // LLM tool loop: internal tools run locally, external tools are
+        // forwarded to TaskWeaver. Both are presented to the LLM together.
+        $result = ['summary' => sprintf('Step "%s" ran with %d tools available.', $stepName, count($tools))];
 
         while (true) {
             $response = $llm->chat($messages, $tools);
@@ -191,9 +213,28 @@ final class RunCommand extends Command
                     continue;
                 }
 
-                // External tool → forward to TaskWeaver with the event key.
-                $output->writeln(sprintf('Calling external tool %s', $toolName));
-                $callResult = $client->callTool($taskId, $eventId, $eventKey, $toolName, $args, null);
+                if ($internalTools->has($toolName)) {
+                    // Internal tool → run locally in the sandbox, then log
+                    // the execution to the controller for auditability.
+                    $output->writeln(sprintf('Running internal tool %s', $toolName));
+                    $callResult = $internalTools->get($toolName)->run($args);
+
+                    try {
+                        $client->logInternalToolCall(
+                            $eventId,
+                            $toolName,
+                            ['args' => $args, 'result' => $callResult],
+                        );
+                    } catch (HttpException $e) {
+                        // Auditing must not fail the step: log locally and
+                        // continue with the result we already have.
+                        $output->writeln(sprintf('<comment>Internal tool log failed (%d): %s</comment>', $e->status, $e->getMessage()));
+                    }
+                } else {
+                    // External tool → forward to TaskWeaver with the event key.
+                    $output->writeln(sprintf('Calling external tool %s', $toolName));
+                    $callResult = $client->callTool($taskId, $eventId, $eventKey, $toolName, $args, null);
+                }
 
                 $messages[] = [
                     'role' => 'tool',

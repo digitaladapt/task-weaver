@@ -43,10 +43,10 @@ class SchedulerServiceTest extends TestCase
     private function scheduler(?EntityManagerInterface $em = null, ?MessageBusInterface $bus = null): SchedulerService
     {
         return new SchedulerService(
-            $em ?? $this->createMock(EntityManagerInterface::class),
-            // TaskRepository is unused by isDue/nextRunAt; mock it loosely.
-            $this->createMock(\App\Repository\TaskRepository::class),
-            $bus ?? $this->createMock(MessageBusInterface::class),
+            $em ?? $this->createStub(EntityManagerInterface::class),
+            // TaskRepository is unused by isDue/nextRunAt; stub it loosely.
+            $this->createStub(\App\Repository\TaskRepository::class),
+            $bus ?? $this->createStub(MessageBusInterface::class),
             $this->tz,
         );
     }
@@ -125,8 +125,8 @@ class SchedulerServiceTest extends TestCase
      */
     private function emWithEventRepo(): EntityManagerInterface
     {
-        $em = $this->createMock(EntityManagerInterface::class);
-        $repo = $this->createMock(\App\Repository\EventRepository::class);
+        $em = $this->createStub(EntityManagerInterface::class);
+        $repo = $this->createStub(\App\Repository\EventRepository::class);
         $repo->method('revokeKeysForStep')->willReturn(0);
         $em->method('getRepository')->willReturn($repo);
 
