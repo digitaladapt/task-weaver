@@ -94,6 +94,36 @@ final class ToolResolverTest extends TestCase
         self::assertCount(0, $schemas);
     }
 
+    public function testTransportMetadataIsStrippedFromAdvertisedSchemas(): void
+    {
+        $server = $this->server();
+        $tool = new ToolDef('get_weather', ['weather'], [
+            'type' => 'object',
+            'properties' => ['days' => ['type' => 'integer']],
+            'x-mcp' => [
+                'method' => 'GET',
+                'path' => '/weather',
+                'query_params' => ['days'],
+            ],
+            'x-mcp-server' => ['server_url' => 'https://api.example.com'],
+        ]);
+        $server->addToolDef($tool);
+
+        $schemas = $this->resolverWith([$tool])->schemasForStep($this->stepWithTags(['weather']));
+
+        self::assertCount(1, $schemas);
+        $schema = $schemas[0]['schema'];
+        self::assertArrayNotHasKey('x-mcp', $schema);
+        self::assertArrayNotHasKey('x-mcp-server', $schema);
+        // The argument schema itself is untouched.
+        self::assertSame('object', $schema['type']);
+        self::assertArrayHasKey('days', $schema['properties']);
+
+        // The stored ToolDef keeps its metadata — only the advertised copy
+        // is stripped (the proxy still needs it to route the call).
+        self::assertArrayHasKey('x-mcp', $tool->getSchema());
+    }
+
     public function testDisabledServerToolsNotOffered(): void
     {
         $server = $this->server();

@@ -37,8 +37,11 @@ use Throwable;
  *     "x-mcp-server": { "server_url": "https://api.example.com" }
  *   }
  *
- * Only OpenAPI-defined tools (with an `x-mcp` block) are invocable by this
- * client. Tools without one are out of scope for v1 and return a clear error.
+ * The `x-mcp` block is normally derived automatically from the operation
+ * itself by OpenApiToolParser (method, path, param locations), so
+ * auto-generated specs (FastAPI et al.) are invocable out of the box.
+ * An explicit `x-mcp` on the operation overrides the derived value per-key
+ * (e.g. to wrap args under a `body_param`).
  */
 final class OpenApiMcpClient implements McpClientInterface
 {

@@ -23,7 +23,13 @@ use function is_string;
  *   - description = operation description or summary
  *   - schema      = JSON Schema built from the operation's parameters
  *                   (path/query/header/cookie → properties, required) plus
- *                   its requestBody schema (dereferenced).
+ *                   its requestBody schema (dereferenced). The schema also
+ *                   carries a derived `x-mcp` block (HTTP method, path,
+ *                   path/query param locations) so the OpenAPI transport
+ *                   can invoke the tool without hand-written metadata; an
+ *                   explicit `x-mcp` on the operation overrides it.
+ *                   ToolResolver strips `x-mcp*` keys before advertising
+ *                   schemas to workers/LLMs.
  *
  * $refs are resolved against the document's #/components/schemas (and
  * deeper paths). Unknown/unresolvable refs are left as-is defensively.
@@ -55,7 +61,7 @@ final class OpenApiToolParser
                 $tags = $this->stringList($op['tags'] ?? []);
                 $description = $this->description($op);
 
-                $schema = $this->buildSchema($op, $spec);
+                $schema = $this->buildSchema($op, $spec, $method, (string) $path);
 
                 $tools[] = new DiscoveredTool(
                     name: $name,
@@ -102,10 +108,12 @@ final class OpenApiToolParser
     /**
      * @param array<string, mixed> $op
      * @param array<string, mixed> $components
+     * @param string              $method the HTTP method of this operation
+     * @param string              $path   the raw path template, e.g. "/repos/{owner}/{repo}"
      *
      * @return array<string, mixed>
      */
-    private function buildSchema(array $op, array $components): array
+    private function buildSchema(array $op, array $components, string $method, string $path): array
     {
         $properties = [];
         $required = [];
@@ -165,7 +173,71 @@ final class OpenApiToolParser
             $schema['required'] = array_values($required);
         }
 
+        // Attach the transport endpoint metadata the OpenAPI client needs
+        // (method/path/param locations), so specs without hand-written
+        // `x-mcp` blocks — i.e. every auto-generated one (FastAPI, ...) —
+        // still yield invocable tools. An explicit `x-mcp` block on the
+        // operation wins per-key.
+        $schema['x-mcp'] = $this->deriveEndpointMetadata($op, $method, $path);
+
+        if (is_array($op['x-mcp-server'] ?? null)) {
+            $schema['x-mcp-server'] = $op['x-mcp-server'];
+        }
+
         return $schema;
+    }
+
+    /**
+     * Derive the `x-mcp` endpoint metadata for an operation from the
+     * operation itself: the HTTP method, the raw path template, and which
+     * parameters live in the path vs the query string. An explicit `x-mcp`
+     * block on the operation is merged on top (per-key override) so exotic
+     * cases (e.g. `body_param` wrapping) can still be hand-specified.
+     *
+     * @param array<string, mixed> $op
+     *
+     * @return array<string, mixed>
+     */
+    private function deriveEndpointMetadata(array $op, string $method, string $path): array
+    {
+        $pathParams = [];
+        $queryParams = [];
+
+        foreach ($this->parameters($op) as $param) {
+            if (!is_array($param)) {
+                continue;
+            }
+            $name = $param['name'] ?? null;
+            $in = $param['in'] ?? null;
+            if (!is_string($name) || '' === $name) {
+                continue;
+            }
+
+            if ('path' === $in) {
+                $pathParams[] = $name;
+            } elseif ('query' === $in) {
+                $queryParams[] = $name;
+            }
+        }
+
+        $mcp = [
+            'method' => strtoupper($method),
+            'path' => $path,
+        ];
+
+        if ([] !== $pathParams) {
+            $mcp['path_params'] = $pathParams;
+        }
+        if ([] !== $queryParams) {
+            $mcp['query_params'] = $queryParams;
+        }
+
+        // Explicit `x-mcp` overrides derived values per key.
+        if (is_array($op['x-mcp'] ?? null)) {
+            $mcp = array_merge($mcp, $op['x-mcp']);
+        }
+
+        return $mcp;
     }
 
     /**

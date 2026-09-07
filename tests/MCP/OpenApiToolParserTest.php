@@ -205,6 +205,83 @@ final class OpenApiToolParserTest extends TestCase
         self::assertContains('get_status', $names);
     }
 
+    public function testDerivesXMcpEndpointMetadata(): void
+    {
+        $tools = (new OpenApiToolParser())->parse($this->spec());
+        $byName = [];
+        foreach ($tools as $tool) {
+            $byName[$tool->name] = $tool;
+        }
+
+        // GET /weather with query+path params → derived from the operation.
+        $weather = $byName['get_weather']->schema['x-mcp'];
+        self::assertSame('GET', $weather['method']);
+        self::assertSame('/weather', $weather['path']);
+        self::assertSame(['days'], $weather['query_params']);
+        self::assertSame(['location'], $weather['path_params']);
+
+        // Two path params, no query.
+        $issues = $byName['list_issues']->schema['x-mcp'];
+        self::assertSame('GET', $issues['method']);
+        self::assertSame('/repos/{owner}/{repo}/issues', $issues['path']);
+        self::assertSame(['owner', 'repo'], $issues['path_params']);
+        self::assertArrayNotHasKey('query_params', $issues);
+
+        // POST with request body → no query/path params, method preserved.
+        $log = $byName['log']->schema['x-mcp'];
+        self::assertSame('POST', $log['method']);
+        self::assertSame('/log', $log['path']);
+        self::assertArrayNotHasKey('path_params', $log);
+        self::assertArrayNotHasKey('query_params', $log);
+
+        // POST with $ref'd body schema — metadata derives the same way.
+        $event = $byName['create_event']->schema['x-mcp'];
+        self::assertSame('POST', $event['method']);
+        self::assertSame('/events', $event['path']);
+    }
+
+    public function testExplicitXMcpOverridesDerivedMetadata(): void
+    {
+        $spec = $this->spec();
+        $spec['paths']['/weather']['get']['x-mcp'] = [
+            'path' => '/v2/weather',
+            'body_param' => 'args',
+        ];
+
+        $tools = (new OpenApiToolParser())->parse($spec);
+        $byName = [];
+        foreach ($tools as $tool) {
+            $byName[$tool->name] = $tool;
+        }
+
+        $mcp = $byName['get_weather']->schema['x-mcp'];
+        // Overridden keys win.
+        self::assertSame('/v2/weather', $mcp['path']);
+        self::assertSame('args', $mcp['body_param']);
+        // Non-overridden derived keys survive.
+        self::assertSame('GET', $mcp['method']);
+        self::assertSame(['location'], $mcp['path_params']);
+    }
+
+    public function testXMcpServerBlockIsPreserved(): void
+    {
+        $spec = $this->spec();
+        $spec['paths']['/weather']['get']['x-mcp-server'] = [
+            'server_url' => 'https://api.example.com',
+        ];
+
+        $tools = (new OpenApiToolParser())->parse($spec);
+        $byName = [];
+        foreach ($tools as $tool) {
+            $byName[$tool->name] = $tool;
+        }
+
+        self::assertSame(
+            ['server_url' => 'https://api.example.com'],
+            $byName['get_weather']->schema['x-mcp-server'],
+        );
+    }
+
     public function testHandlesRecursiveSchemaWithoutInfiniteLoop(): void
     {
         $spec = [

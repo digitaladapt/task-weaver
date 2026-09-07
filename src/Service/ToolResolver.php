@@ -48,13 +48,36 @@ final class ToolResolver
                 $schemas[] = [
                     'name' => $tool->getName(),
                     'scope' => 'external',
-                    'schema' => $tool->getSchema(),
+                    // Strip transport metadata (`x-mcp`, `x-mcp-server`) so the
+                    // LLM only ever sees the tool's argument schema — the
+                    // endpoint block is TaskWeaver-internal plumbing.
+                    'schema' => $this->stripTransportMetadata($tool->getSchema()),
                     'server' => $tool->getServer()->getName(),
                 ];
             }
         }
 
         return $schemas;
+    }
+
+    /**
+     * Remove `x-mcp*` transport metadata keys from a tool schema so workers
+     * and LLMs never receive endpoint plumbing. Only top-level keys are
+     * stripped — the metadata never nests deeper.
+     *
+     * @param array<string, mixed> $schema
+     *
+     * @return array<string, mixed>
+     */
+    private function stripTransportMetadata(array $schema): array
+    {
+        foreach (array_keys($schema) as $key) {
+            if (is_string($key) && str_starts_with($key, 'x-mcp')) {
+                unset($schema[$key]);
+            }
+        }
+
+        return $schema;
     }
 
     /**
