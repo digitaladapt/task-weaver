@@ -1,0 +1,88 @@
+# TaskWeaver full-stack compose (controller + worker + local LLM).
+#
+# Network topology per WORKER.md §8:
+#
+#   taskweaver-private (internal, trusted): worker + controller + llm
+#   default/public:                           controller only (admin UI,
+#                                             MCP servers, keyed LLMs)
+#
+# The worker is attached ONLY to taskweaver-private, which is internal —
+# no route to the internet, enforced at the network layer. Even a fully
+# compromised worker container has no secrets and no egress; the
+# blast-radius boundary is the network.
+#
+# Usage:
+#   docker compose build
+#   docker compose up -d
+#   → admin UI: http://localhost:8080
+#
+# The worker provisions itself on boot using TASKWEAVER_ENROLLMENT_TOKEN
+# (must match the controller's env value).
+
+services:
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      APP_SECRET: change-me
+      TASKWEAVER_ENROLLMENT_TOKEN: dev-enrollment-token
+      TASKWEAVER_LLM_URL: http://llm:11434/v1
+      TASKWEAVER_LLM_MODEL: llama3.1
+      # Set TASKWEAVER_LLM_API_KEY to switch workers to the proxied channel
+      # (workers then send LLM traffic via the controller's /api/worker/llm).
+      TASKWEAVER_LLM_API_KEY: ""
+    volumes:
+      - controller-data:/var/www/html/var/data
+    ports:
+      - "8080:80"
+    networks:
+      - default          # public side: admin UI + outbound MCP/LLM calls
+      - taskweaver-private
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      TASKWEAVER_CONTROLLER_URL: http://controller:80
+      TASKWEAVER_ENROLLMENT_TOKEN: dev-enrollment-token
+      WORKER_NAME: worker-1
+    # --- WORKER.md §2 hardening ---
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /work/tmp
+    volumes:
+      - worker-workspace:/work/ws
+    mem_limit: 1g
+    cpus: "1.0"
+    # The worker's ONLY network is the internal private one: no internet,
+    # ever. Its one trusted channel is the controller (+ the local LLM).
+    networks:
+      - taskweaver-private
+    restart: unless-stopped
+
+  # Local LLM (Ollama). Optional — comment out if you use a keyed provider
+  # (then set TASKWEAVER_LLM_API_KEY on the controller instead).
+  llm:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - taskweaver-private
+    restart: unless-stopped
+
+networks:
+  # Internal: no outbound route for anything attached to it. The controller
+  # bridges it to the outside world (worker API + proxied LLM channel).
+  taskweaver-private:
+    internal: true
+
+volumes:
+  controller-data:
+  worker-workspace:
+  ollama-models:

@@ -45,15 +45,20 @@ final class StepController extends AbstractController
 
         $payload = json_decode((string) $request->getContent(), true) ?? [];
         $status = is_string($payload['status'] ?? null) ? $payload['status'] : '';
-
-        // Only `running` is an allowed forward transition here; `failed` is
-        // handled via the failure path. A step already expired is rejected.
-        if (Step::STATUS_RUNNING !== $status) {
-            return $this->json(['error' => 'Only status "running" is accepted here'], Response::HTTP_BAD_REQUEST);
-        }
+        $reason = is_string($payload['reason'] ?? null) ? $payload['reason'] : '';
 
         try {
-            $workflow->markStepRunning($step, $worker);
+            if (Step::STATUS_RUNNING === $status) {
+                $workflow->markStepRunning($step, $worker);
+            } elseif (Step::STATUS_FAILED === $status) {
+                // A worker reporting its own failure (e.g. the LLM is
+                // unreachable, or the step is unrecoverable). Better than
+                // waiting for the lazy 600s expiry: the failure flows into
+                // the final step's envelope immediately.
+                $workflow->failStep($step, $worker, '' !== $reason ? $reason : 'reported failed by worker');
+            } else {
+                return $this->json(['error' => 'Only statuses "running" and "failed" are accepted here'], Response::HTTP_BAD_REQUEST);
+            }
         } catch (LogicException $e) {
             return $this->json(['error' => $e->getMessage()], Response::HTTP_CONFLICT);
         }
