@@ -45,6 +45,7 @@
         header.nav nav { display: flex; gap: 16px; flex-wrap: wrap; }
         header.nav nav a { color: var(--muted); font-weight: 500; }
         header.nav nav a.active, header.nav nav a:hover { color: var(--text); }
+        header.nav .nav-right { margin-left: auto; display: flex; align-items: center; }
 
         main { padding: 24px; max-width: 1200px; margin: 0 auto; }
         @media (max-width: 640px) {
@@ -212,6 +213,9 @@
             <a href="{{ path('app_tools') }}" {% if app.request.attributes.get('_route') starts with 'app_tool' %}class="active"{% endif %}>Tools</a>
             <a href="{{ path('app_workers') }}" {% if app.request.attributes.get('_route') == 'app_workers' %}class="active"{% endif %}>Workers</a>
         </nav>
+        <div class="nav-right">
+            <button id="logout-btn" class="btn btn-ghost btn-small" type="button">Log out</button>
+        </div>
     </header>
     <main>
         {% for type, messages in app.flashes %}
@@ -222,5 +226,23 @@
         {% block body %}{% endblock %}
     </main>
     {% block javascripts %}{% endblock %}
+
+    {# Session bootstrap (penny-track pattern): if this page rendered, we
+       have a valid session. When the session later expires server-side
+       but the browser still holds the key in localStorage, the login page
+       re-verifies it transparently and re-establishes the cookie. #}
+    <script>
+    (function () {
+        'use strict';
+        var KEY_STORAGE = 'taskweaver_api_key';
+        var logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', function () {
+                localStorage.removeItem(KEY_STORAGE);
+                window.location.href = '/login';
+            });
+        }
+    })();
+    </script>
 </body>
 </html>

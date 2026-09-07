@@ -42,6 +42,7 @@
     {% import _self as forms %}
 
     <form method="post" action="{% if is_new %}{{ path('app_task_new') }}{% else %}{{ path('app_task_edit', {id: task.id}) }}{% endif %}" class="task-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
         <div class="form-head">
             {% if is_new %}
                 <a href="{{ path('app_tasks') }}" class="btn btn-ghost">Cancel</a>
@@ -176,6 +177,7 @@
     {% if not is_new %}
         <div class="delete-zone">
             <form method="post" action="{{ path('app_task_delete', {id: task.id}) }}" class="inline" onsubmit="return confirm('Delete this task?\\n\\nIt will be hidden and disabled from running, but its steps and history are kept.');">
+                <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
                 <button type="submit" class="btn btn-danger">Delete Task</button>
             </form>
         </div>
