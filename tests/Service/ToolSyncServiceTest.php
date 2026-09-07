@@ -64,7 +64,7 @@ final class ToolSyncServiceTest extends TestCase
     {
         // persist()/flush() are void; leave them unconfigured so the mock
         // silently accepts any call (PHPUnit cannot configure void returns).
-        $em = $this->createMock(EntityManagerInterface::class);
+        $em = $this->createStub(EntityManagerInterface::class);
 
         return new ToolSyncService($em, $registry);
     }

@@ -19,10 +19,10 @@ final class ProvisionServiceTest extends TestCase
 {
     private function service(?Worker $existing = null): ProvisionService
     {
-        $repo = $this->createMock(WorkerRepository::class);
+        $repo = $this->createStub(WorkerRepository::class);
         $repo->method('findOneBy')->willReturn($existing);
 
-        $em = $this->createMock(EntityManagerInterface::class);
+        $em = $this->createStub(EntityManagerInterface::class);
 
         return new ProvisionService(
             $em,

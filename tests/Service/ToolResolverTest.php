@@ -26,7 +26,7 @@ final class ToolResolverTest extends TestCase
      */
     private function resolverWith(array $tools): ToolResolver
     {
-        $repo = $this->createMock(ToolDefRepository::class);
+        $repo = $this->createStub(ToolDefRepository::class);
         $repo->method('findAll')->willReturn($tools);
         $repo->method('findByName')->willReturnCallback(
             static fn (string $name) => array_values(array_filter(
@@ -35,8 +35,8 @@ final class ToolResolverTest extends TestCase
             ))[0] ?? null,
         );
 
-        $em = $this->createMock(EntityManagerInterface::class);
-        $em->method('getRepository')->with(ToolDef::class)->willReturn($repo);
+        $em = $this->createStub(EntityManagerInterface::class);
+        $em->method('getRepository')->willReturn($repo);
 
         return new ToolResolver($em);
     }

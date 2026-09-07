@@ -22,7 +22,8 @@
 /.php-cs-fixer.cache
 ###< friendsofphp/php-cs-fixer ###
 
-###> phpunit ###
-/.phpunit.result.cache
+###> phpunit/phpunit ###
+/phpunit.xml
 /.phpunit.cache/
-###< phpunit ###
+/.phpunit.result.cache
+###< phpunit/phpunit ###

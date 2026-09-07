@@ -10,8 +10,8 @@
         "symfony/console": "^7.2"
     },
     "require-dev": {
-        "symfony/dotenv": "^7.2",
-        "symfony/phpunit-bridge": "^7.2"
+        "phpunit/phpunit": "^13.2",
+        "symfony/dotenv": "^7.2"
     },
     "autoload": {
         "psr-4": {
