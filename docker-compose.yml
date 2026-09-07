@@ -76,6 +76,30 @@ services:
       - taskweaver-private
     restart: unless-stopped
 
+  # Long-running scheduler driver: ticks the scheduler every minute so
+  # recurring tasks fire without any host cron. Opt-in via compose profiles
+  # (docker compose --profile scheduler up -d); without the profile the
+  # deployment relies on an external cron / systemd timer calling
+  # app:scheduler:tick instead.
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["bin/console", "app:scheduler:run"]
+    depends_on:
+      - controller
+    environment:
+      APP_SECRET: change-me
+      TASKWEAVER_ENROLLMENT_TOKEN: dev-enrollment-token
+      TASKWEAVER_LLM_URL: http://llm:11434/v1
+      TASKWEAVER_LLM_MODEL: llama3.1
+    volumes:
+      - controller-data:/var/www/html/var/data
+    networks:
+      - taskweaver-private
+    profiles: ["scheduler"]
+    restart: unless-stopped
+
 networks:
   # Internal: no outbound route for anything attached to it. The controller
   # bridges it to the outside world (worker API + proxied LLM channel).

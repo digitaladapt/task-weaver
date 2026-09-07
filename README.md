@@ -11,7 +11,7 @@ the worker-facing contract.
 
 - PHP 8.4 + Symfony 8.x
 - Doctrine ORM + DBAL on **SQLite** (`var/taskweaver.db`)
-- Twig (admin UI); scheduling via a cron-driven tick command
+- Twig (admin UI); scheduling via a tick command (cron, Compose profile, or systemd timer)
 - PHP MCP client for OpenAPI + streamable HTTP transports only
 
 ## Quick start (controller)
@@ -58,21 +58,54 @@ Routes are plain `app_*` HTML routes; the worker-facing API lives under
 
 ## Scheduling
 
-Recurring tasks are driven by a **cron entry that runs the scheduler tick
-every minute** — there is no always-on scheduler process:
+Recurring tasks are driven by a scheduler **tick** that runs every minute.
+There are three ways to run it — pick one:
+
+**1. Cron (default, one-shot per minute):**
 
 ```cron
 * * * * * cd /path/to/taskweaver && bin/console app:scheduler:tick
 ```
 
-Each tick marks due recurring tasks `ready` (so they can be claimed) and
-advances their `next_run_at`. The check is cursor-based (`next_run_at <= now`),
-so a delayed tick or brief outage catches up a missed slot instead of skipping
-it. One-off tasks (no schedule) don't need the tick — they're triggered from
-the admin UI with **Run**.
+**2. Docker Compose (long-running scheduler driver):**
 
-The deployment must run this cron entry, or scheduled tasks silently never
-fire.
+```bash
+docker compose --profile scheduler up -d
+```
+
+This starts a `scheduler` container running `bin/console app:scheduler:run` —
+a daemon that ticks in a loop (default every 60s). No host cron needed.
+
+**3. systemd timer (non-Docker host):**
+
+```ini
+# /etc/systemd/system/taskweaver-scheduler.timer
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+```
+```ini
+# /etc/systemd/system/taskweaver-scheduler.service
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/taskweaver
+ExecStart=/path/to/taskweaver/bin/console app:scheduler:tick
+```
+
+Then `systemctl enable --now taskweaver-scheduler.timer`.
+
+Each tick (however it is invoked) marks due recurring tasks `ready` (so they
+can be claimed) and advances their `next_run_at`. The check is cursor-based
+(`next_run_at <= now`), so a delayed tick or brief outage catches up a missed
+slot instead of skipping it. One-off tasks (no schedule) don't need the tick —
+they're triggered from the admin UI with **Run** (or `bin/console app:task:run
+<id>` from the CLI).
+
+The deployment must run the tick (one of the three options above), or
+scheduled tasks silently never fire.
 
 ## Reference worker
 
@@ -156,5 +189,6 @@ Production is a standard Symfony app: inject the env vars from
 [`.env.example`](.env.example) (no dotenv file in prod), run
 `composer install --no-dev --optimize-autoloader`, migrate, and serve
 `public/` behind the reverse proxy of your choice. SQLite lives at
-`DATABASE_URL` and must be on a persistent volume. **Critically, add the
-scheduler cron entry from the Scheduling section** so recurring tasks fire.
+`DATABASE_URL` and must be on a persistent volume. **Critically, set up one
+of the scheduler tick options from the Scheduling section** (cron, the Compose
+`scheduler` profile, or a systemd timer) so recurring tasks fire.
