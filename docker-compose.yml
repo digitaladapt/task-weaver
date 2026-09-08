@@ -30,6 +30,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: controller
     environment:
       APP_ENV: ${APP_ENV:-prod}
       # Core secrets — required, no defaults. Generate with:
@@ -59,10 +60,11 @@ services:
 
   worker:
     build:
-      # Context is the worker dir itself so the image can't accidentally
-      # bake in anything outside it (matches the CI docker workflows).
-      context: ./worker
-      dockerfile: ../docker/worker.Dockerfile
+      # Same single Dockerfile as the controller; the worker stage carries
+      # no secrets and runs as a non-root user (WORKER.md §2 hardening).
+      context: .
+      dockerfile: Dockerfile
+      target: worker
     environment:
       TASKWEAVER_CONTROLLER_URL: http://controller:80
       TASKWEAVER_ENROLLMENT_TOKEN: ${TASKWEAVER_ENROLLMENT_TOKEN:?TASKWEAVER_ENROLLMENT_TOKEN is required — copy .env.example to .env and set it}
@@ -109,6 +111,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: scheduler
     command: ["bin/console", "app:scheduler:run"]
     depends_on:
       controller:

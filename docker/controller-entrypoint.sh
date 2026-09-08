@@ -24,8 +24,10 @@ if [ -n "${CADDYFILE_BASE64:-}" ]; then
     echo "$CADDYFILE_BASE64" | base64 -d > /tmp/Caddyfile
     CADDY_CONFIG=/tmp/Caddyfile
 else
-    # Local runs: use the repo copy of the Caddyfile loaded at build time.
-    CADDY_CONFIG=/app/docker/Caddyfile
+    # The Caddyfile is baked into the image at /etc/frankenphp/Caddyfile.
+    # (Legacy override: if the repo copy is mounted at /app/docker, use it.)
+    CADDY_CONFIG=/etc/frankenphp/Caddyfile
+    [ -f /app/docker/Caddyfile ] && CADDY_CONFIG=/app/docker/Caddyfile
 fi
 
 echo "Running doctrine migrations..."

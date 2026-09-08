@@ -19,6 +19,12 @@ vendor/
 worker/vendor/
 worker/bin/.phpunit/
 
+# Worker dev/test artifacts (the worker is built from the same context now).
+worker/tests/
+worker/phpunit.dist.xml
+worker/.phpunit.result.cache
+worker/.phpunit.cache/
+
 # Editor noise
 .idea
 .vscode
