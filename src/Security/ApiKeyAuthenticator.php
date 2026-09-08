@@ -4,34 +4,33 @@ declare(strict_types=1);
 
 namespace App\Security;
 
-use App\Repository\ApiKeyRepository;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
-use Symfony\Component\Security\Core\Exception\CustomUserMessageAuthenticationException;
+use Symfony\Component\Security\Core\Exception\TooManyLoginAttemptsAuthenticationException;
 use Symfony\Component\Security\Http\Authenticator\AbstractAuthenticator;
 use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
 use Symfony\Component\Security\Http\Authenticator\Passport\SelfValidatingPassport;
 use Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface;
 
 /**
- * Authenticates the admin via the X-API-Key header (penny-track pattern).
+ * Authenticates the admin via the X-API-Key header.
  *
  * The browser keeps the key in localStorage and attaches it to the
  * session-bootstrap call (/api/auth/verify); the resulting session cookie
  * then carries authentication for server-rendered pages and form POSTs.
  * Any request may also present the header directly (API-style use).
+ *
+ * The key is validated in ApiKeyCheckListener on CheckPassportEvent, so a
+ * failed key still flows through the firewall's LoginThrottlingListener
+ * in the same way a bad password would — rate-limiting actually applies
+ * to /api/auth/verify.
  */
 class ApiKeyAuthenticator extends AbstractAuthenticator implements AuthenticationEntryPointInterface
 {
-    public function __construct(
-        private readonly ApiKeyRepository $apiKeyRepository,
-    ) {
-    }
-
     public function supports(Request $request): ?bool
     {
         return $request->headers->has('X-API-Key')
@@ -40,19 +39,9 @@ class ApiKeyAuthenticator extends AbstractAuthenticator implements Authenticatio
 
     public function authenticate(Request $request): SelfValidatingPassport
     {
-        $apiKey = (string) $request->headers->get('X-API-Key');
-
-        $apiKeyEntity = $this->apiKeyRepository->findFirst();
-        $valid = false;
-
-        if (null !== $apiKeyEntity) {
-            $valid = password_verify($apiKey, $apiKeyEntity->getKeyHash());
-        }
-
-        if (!$valid) {
-            throw new CustomUserMessageAuthenticationException('Invalid API key');
-        }
-
+        // Validation happens in ApiKeyCheckListener (CheckPassportEvent);
+        // returning a self-validating passport here keeps the normal
+        // login-throttling path for bad keys.
         return new SelfValidatingPassport(new UserBadge('admin', static fn () => new ApiKeyUser()));
     }
 
@@ -65,13 +54,19 @@ class ApiKeyAuthenticator extends AbstractAuthenticator implements Authenticatio
 
     public function onAuthenticationFailure(Request $request, AuthenticationException $exception): ?Response
     {
+        $status = $exception instanceof TooManyLoginAttemptsAuthenticationException
+            ? Response::HTTP_TOO_MANY_REQUESTS
+            : Response::HTTP_UNAUTHORIZED;
+
         if ($this->wantsJson($request)) {
             return new JsonResponse(
                 ['error' => strtr($exception->getMessageKey(), $exception->getMessageData())],
-                Response::HTTP_UNAUTHORIZED
+                $status
             );
         }
 
+        // For browser traffic, a 429 collapses back to the login screen just
+        // like a bad key — the throttle is observable by API clients anyway.
         return new RedirectResponse('/login');
     }
 

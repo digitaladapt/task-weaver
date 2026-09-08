@@ -38,6 +38,8 @@ final class AdminAuthFlowTest extends WebTestCase
         $metadata = $em->getMetadataFactory()->getAllMetadata();
         $schemaTool->dropSchema($metadata);
         $schemaTool->createSchema($metadata);
+
+        $this->resetLoginThrottling();
     }
 
     private function entityManager(): EntityManagerInterface
@@ -46,6 +48,18 @@ final class AdminAuthFlowTest extends WebTestCase
         assert($em instanceof EntityManagerInterface);
 
         return $em;
+    }
+
+    /**
+     * The rate-limiter cache persists across tests in the same run (it lives
+     * under var/cache/test). Clear that pool so each test starts from a
+     * clean bucket — otherwise a login attempt in test A would carry over
+     * and break test B.
+     */
+    private function resetLoginThrottling(): void
+    {
+        $pool = $this->client->getContainer()->get('cache.rate_limiter');
+        $pool->clear();
     }
 
     private function seedKey(KernelBrowser $client): string
@@ -121,6 +135,30 @@ final class AdminAuthFlowTest extends WebTestCase
         );
 
         self::assertResponseStatusCodeSame(401);
+    }
+
+    public function testVerifyIsThrottledAfterFiveFailures(): void
+    {
+        // login_throttling: 5 attempts / 1 minute per IP (and per
+        // IP+username). The sixth bad verify must be answered 429 Too Many
+        // Requests, proving the limiter is wired into the main firewall.
+        $this->seedKey($this->client);
+
+        for ($i = 1; $i <= 5; ++$i) {
+            $this->client->request(
+                'POST',
+                '/api/auth/verify',
+                server: ['HTTP_X_API_KEY' => 'bad-key-'.$i, 'HTTP_ACCEPT' => 'application/json']
+            );
+            self::assertSame(401, $this->client->getResponse()->getStatusCode(), "Attempt {$i} should be a plain 401");
+        }
+
+        $this->client->request(
+            'POST',
+            '/api/auth/verify',
+            server: ['HTTP_X_API_KEY' => 'bad-key-one-too-many', 'HTTP_ACCEPT' => 'application/json']
+        );
+        self::assertResponseStatusCodeSame(429);
     }
 
     public function testWorkerApiUnaffectedByAdminAuth(): void
