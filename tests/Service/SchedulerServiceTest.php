@@ -16,7 +16,6 @@ use LogicException;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use ReflectionMethod;
-use Symfony\Component\Messenger\MessageBusInterface;
 
 /**
  * Scheduler + recurring-task lifecycle semantics.
@@ -40,13 +39,12 @@ class SchedulerServiceTest extends TestCase
         $this->tz = new TimezoneService('UTC');
     }
 
-    private function scheduler(?EntityManagerInterface $em = null, ?MessageBusInterface $bus = null): SchedulerService
+    private function scheduler(?EntityManagerInterface $em = null): SchedulerService
     {
         return new SchedulerService(
             $em ?? $this->createStub(EntityManagerInterface::class),
             // TaskRepository is unused by isDue/nextRunAt; stub it loosely.
             $this->createStub(\App\Repository\TaskRepository::class),
-            $bus ?? $this->createStub(MessageBusInterface::class),
             $this->tz,
         );
     }

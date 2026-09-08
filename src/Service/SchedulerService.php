@@ -6,7 +6,6 @@ namespace App\Service;
 
 use App\Entity\Step;
 use App\Entity\Task;
-//use App\Message\TaskDueMessage;
 use App\Repository\TaskRepository;
 
 use function count;
@@ -15,7 +14,6 @@ use Cron\CronExpression;
 use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\ORM\EntityManagerInterface;
-//use Symfony\Component\Messenger\MessageBusInterface;
 
 /**
  * Task scheduler (SPEC.md → Scheduling).
@@ -29,7 +27,6 @@ final class SchedulerService
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly TaskRepository $tasks,
-        //private readonly MessageBusInterface $bus,
         private readonly TimezoneService $timezone,
     ) {
     }
@@ -49,8 +46,6 @@ final class SchedulerService
             $task->setNextRunAt($this->nextRunAt($task, $now));
             $task->touch();
             $this->em->persist($task);
-
-            //$this->bus->dispatch(new TaskDueMessage($task->getId()->toRfc4122()));
         }
 
         if (count($due) > 0) {

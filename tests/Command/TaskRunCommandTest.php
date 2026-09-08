@@ -43,7 +43,6 @@ final class TaskRunCommandTest extends TestCase
         $scheduler = new SchedulerService(
             $this->em,
             $this->createStub(TaskRepository::class),
-            $this->createStub(\Symfony\Component\Messenger\MessageBusInterface::class),
             new TimezoneService('UTC'),
         );
 
