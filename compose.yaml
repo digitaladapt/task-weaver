@@ -112,7 +112,6 @@ services:
       context: .
       dockerfile: Dockerfile
       target: scheduler
-    command: ["bin/console", "app:scheduler:run"]
     depends_on:
       controller:
         condition: service_started
@@ -126,9 +125,6 @@ services:
       TASKWEAVER_ENROLLMENT_TOKEN: ${TASKWEAVER_ENROLLMENT_TOKEN:?TASKWEAVER_ENROLLMENT_TOKEN is required — copy .env.example to .env and set it}
       TASKWEAVER_TIMEZONE: ${TASKWEAVER_TIMEZONE:-}
       DATABASE_URL: ${DATABASE_URL:-sqlite:///%kernel.project_dir%/var/data/taskweaver.db}
-      # The controller image's entrypoint can't see its baked-in Caddyfile when
-      # a custom command runs, so compose supplies it (base64 → file → serve).
-      CADDYFILE_BASE64: ${CADDYFILE_BASE64:-IyBUYXNrV2VhdmVyIGNvbnRyb2xsZXIg4oCUIHNlcnZlZCBieSBGcmFua2VuUEhQICh3b3JrZXIgbW9kZSkuCnsKCSMgRnJhbmtlblBIUCBtb2R1bGUgaXMgYnVpbHQgaW50byB0aGUgZHVuZ2xhcy9mcmFua2VucGhwIGltYWdlLgoJIyBMb2dzIHRvIHN0ZG91dC9zdGRlcnIgc28gYGRvY2tlciBsb2dzYCBzaG93cyByZXF1ZXN0ICsgd29ya2VyIG91dHB1dC4KCWxvZwp9CgojIFBsYWluIEhUVFAg4oCUIFRMUyBpcyB0ZXJtaW5hdGVkIGJ5IHRoZSBleHRlcm5hbCByZXZlcnNlIHByb3h5IGluIGZyb250Lgp7JFNFUlZFUl9OQU1FfSB7Cglyb290ICogL2FwcC9wdWJsaWMKCWVuY29kZSB6c3RkIGd6aXAKCgkjIFNlY3VyaXR5IGhlYWRlcnMKCWhlYWRlciB7CgkJWC1Db250ZW50LVR5cGUtT3B0aW9ucyBub3NuaWZmCgkJWC1GcmFtZS1PcHRpb25zIERFTlkKCQlSZWZlcnJlci1Qb2xpY3kgc3RyaWN0LW9yaWdpbi13aGVuLWNyb3NzLW9yaWdpbgoJCS1TZXJ2ZXIKCX0KCgkjIFN5bWZvbnkgZnJvbnQgY29udHJvbGxlciwga2VwdCBpbiBtZW1vcnkgYWNyb3NzIHJlcXVlc3RzICh3b3JrZXIgbW9kZSkuCglwaHBfc2VydmVyIHsKCQl3b3JrZXIgL2FwcC9wdWJsaWMvaW5kZXgucGhwCgl9Cn0K}
     volumes:
       - controller-data:/app/var/data
     networks:

@@ -6,9 +6,7 @@
 #                 worker mode (the kernel stays warm across requests).
 #                 Also published/referenced as `latest`.
 #   worker      — the sandboxed LLM agent loop (CLI, non-root, no HTTP).
-#   scheduler   — the controller image with the scheduler role selected at
-#                 runtime (`bin/console app:scheduler:run`); the stage
-#                 exists so bake and compose can name the role explicitly.
+#   scheduler   — runs (`bin/console app:scheduler:run`);
 #
 # Build the whole set from docker-bake.hcl:
 #   docker buildx bake            # build all targets (no push)
@@ -21,7 +19,7 @@
 # given, which is what lets the controller image double as the scheduler
 # without a second Dockerfile.
 
-ARG FRANKENPHP_IMAGE=dunglas/frankenphp:1-php8.4
+ARG FRANKENPHP_IMAGE=dunglas/frankenphp:php8.4
 ARG COMPOSER_IMAGE=composer:2
 
 # ── Stage: base — shared runtime for every variant ────────────────────────
@@ -103,9 +101,6 @@ ENV APP_ENV=prod \
 EXPOSE 80
 
 ENTRYPOINT ["controller-entrypoint"]
-# Default only — the scheduler service overrides the command. The entrypoint
-# runs migrations first for any command, so one image serves both roles.
-CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile"]
 
 # ── Stage: worker — sandboxed LLM agent loop ──────────────────────────────
 FROM base AS worker
@@ -127,7 +122,6 @@ USER worker
 ENTRYPOINT ["tini", "--", "php", "/work/bin/worker", "run"]
 
 # ── Stage: scheduler — controller image, role selected at runtime ─────────
-# Bit-identical to the controller; the stage only exists so bake/compose
-# can address the scheduler role by name. Run it with the scheduler command:
-#   docker run <image> bin/console app:scheduler:run
 FROM controller AS scheduler
+
+ENTRYPOINT ["tini", "--", "php", "/app/bin/console", "app:scheduler:run"]

@@ -6,41 +6,20 @@ set -eu
 WORKDIR=/app
 cd "$WORKDIR"
 
-# Custom command (compose `command:` / docker run args): run migrations
-# first (the scheduler driver needs a current schema), then exec it. This
-# lets one image serve multiple roles — web controller and scheduler
-# driver — without a second Dockerfile.
-if [ "$1" != "frankenphp" ]; then
-    echo "Running doctrine migrations..."
-    php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
-
-    echo "Starting: $*"
-    exec "$@"
-fi
-
-# FrankenPHP image has no default entrypoint, so $1-frankenphp == default CMD.
-# Materialise the Caddyfile the compose scheduler service passes as base64.
-if [ -n "${CADDYFILE_BASE64:-}" ]; then
-    echo "$CADDYFILE_BASE64" | base64 -d > /tmp/Caddyfile
-    CADDY_CONFIG=/tmp/Caddyfile
-else
-    # The Caddyfile is baked into the image at /etc/frankenphp/Caddyfile.
-    # (Legacy override: if the repo copy is mounted at /app/docker, use it.)
-    CADDY_CONFIG=/etc/frankenphp/Caddyfile
-    [ -f /app/docker/Caddyfile ] && CADDY_CONFIG=/app/docker/Caddyfile
-fi
-
 echo "Running doctrine migrations..."
 php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
 
 # Sample data is dev/test only; app:seed is a hard no-op with a warning
 # when APP_ENV=prod (guard lives in SeedCommand, so even a direct call
 # cannot seed a prod database).
-echo "Seeding sample data (idempotent, dev/test only)..."
-php bin/console app:seed
+if [[ "$APP_ENV" != "prod" ]]; then
+    echo "Seeding sample data (idempotent, dev/test only)..."
+    php bin/console app:seed
+fi
 
+# cache warmup failure should not block us from running
 echo "Warming prod cache..."
 php bin/console cache:warmup || true
 
 echo "Starting FrankenPHP..."
-exec frankenphp run --config "$CADDY_CONFIG"
+exec frankenphp run --config "/etc/frankenphp/Caddyfile"
