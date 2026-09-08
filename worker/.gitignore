@@ -1,5 +1,6 @@
 /vendor/
-/composer.lock
+# composer.lock IS tracked — the worker image stage builds from a pinned
+# dependency set (same policy as the root composer.lock).
 /.env.local
 /.phpunit.result.cache
 /.phpunit.cache/

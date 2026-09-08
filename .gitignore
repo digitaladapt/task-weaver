@@ -14,7 +14,8 @@
 
 ###> worker (reference worker, separate composer project) ###
 /worker/vendor/
-/worker/composer.lock
+# worker/composer.lock IS tracked — the worker image stage builds from a
+# pinned dependency set (same policy as the root composer.lock).
 ###< worker ###
 
 ###> friendsofphp/php-cs-fixer ###

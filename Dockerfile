@@ -1,43 +1,133 @@
-# TaskWeaver controller image.
+# syntax=docker/dockerfile:1.7
 #
-# PHP-FPM-less: Apache + mod_php via the official php:apache image (the app
-# is a classic Symfony app; no need for two processes). The controller holds
-# secrets (LLM provider key, enrollment token) and runs the admin UI.
+# TaskWeaver — one Dockerfile, three published runtime variants:
+#
+#   controller  — Symfony admin UI + worker API, served by FrankenPHP in
+#                 worker mode (the kernel stays warm across requests).
+#                 Also published/referenced as `latest`.
+#   worker      — the sandboxed LLM agent loop (CLI, non-root, no HTTP).
+#   scheduler   — the controller image with the scheduler role selected at
+#                 runtime (`bin/console app:scheduler:run`); the stage
+#                 exists so bake and compose can name the role explicitly.
+#
+# Build the whole set from docker-bake.hcl:
+#   docker buildx bake            # build all targets (no push)
+#   docker buildx bake --push     # build and push all targets
+#   docker buildx bake controller # single target
+#   docker buildx bake --print    # show what would be built
+#
+# Runtime role selection is a container command (compose `command:`) — the
+# controller entrypoint runs migrations first and then execs whatever it is
+# given, which is what lets the controller image double as the scheduler
+# without a second Dockerfile.
 
-FROM php:8.4-apache-bookworm
+ARG FRANKENPHP_IMAGE=dunglas/frankenphp:1-php8.4
+ARG COMPOSER_IMAGE=composer:2
 
-# Runtime deps + PHP extensions required by the stack (composer.json).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libicu-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && docker-php-ext-install intl pdo pdo_sqlite \
-    && a2enmod rewrite
+# ── Stage: base — shared runtime for every variant ────────────────────────
+FROM ${FRANKENPHP_IMAGE} AS base
 
-# Composer from the official image (checksum-pinned copy).
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+# PHP extensions the controller needs (intl, pdo_sqlite), plus the small
+# runtime set every variant uses: ca-certificates (TLS for the worker's
+# LLM calls), curl (health checks), tini (worker PID 1 / signal handling).
+RUN install-php-extensions intl pdo pdo_sqlite \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl tini \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /var/www/html
+# ── Stage: controller-deps — controller composer deps (layer-cached) ──────
+FROM base AS controller-deps
 
-# App source (composer files first for layer caching).
-COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+# ARGs are per-stage: redeclare so `COPY --from` can reference it.
+ARG COMPOSER_IMAGE
+COPY --from=${COMPOSER_IMAGE} /usr/bin/composer /usr/bin/composer
+
+WORKDIR /app
+
+# Manifests first so dependency layers only rebuild when they change.
+COPY composer.json composer.lock symfony.lock ./
+RUN composer install --no-dev --no-interaction --prefer-dist \
+    --optimize-autoloader --no-scripts
+
+# ── Stage: controller-build — full controller app + prod autoloader ───────
+FROM controller-deps AS controller-build
 
 COPY . .
+
 RUN composer dump-autoload --classmap-authoritative --no-dev \
-    && rm -rf var/cache/* var/log/* \
-    && APP_ENV=prod APP_SECRET=build-secret bin/console cache:warmup || true \
-    && rm -rf var/cache/* \
-    && chown -R www-data:www-data var public
+    && rm -rf var/cache/* var/log/*
 
-# SQLite database lives on a volume; migrations run at startup.
-ENV APP_ENV=prod
+# Attempt a build-time cache warm. The prod boot guard (Kernel::boot)
+# rejects APP_SECRET=build-secret — a placeholder — so this ALWAYS fails;
+# the warm-up is a no-op that also exercises the autoloader. The real
+# warm-up runs at container start with injected secrets (entrypoint).
+RUN APP_ENV=prod APP_SECRET=build-secret bin/console cache:warmup || true \
+    && rm -rf var/cache/*
 
-# Apache DocumentRoot → public/
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
-    && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
+# ── Stage: worker-deps — worker composer deps (layer-cached) ──────────────
+FROM base AS worker-deps
 
-# Startup: run migrations, then hand off to Apache.
+# ARGs are per-stage: redeclare so `COPY --from` can reference it.
+ARG COMPOSER_IMAGE
+COPY --from=${COMPOSER_IMAGE} /usr/bin/composer /usr/bin/composer
+
+WORKDIR /work
+
+COPY worker/composer.json worker/composer.lock ./
+RUN composer install --no-dev --no-interaction --prefer-dist \
+    --optimize-autoloader --no-scripts
+
+# ── Stage: worker-build — full worker app + prod autoloader ───────────────
+FROM worker-deps AS worker-build
+
+COPY worker/ ./
+RUN composer dump-autoload --classmap-authoritative --no-dev
+
+# ── Stage: controller — web controller (admin UI + worker API) ────────────
+FROM base AS controller
+
+WORKDIR /app
+COPY --from=controller-build /app /app
+RUN rm -rf var/cache/* var/log/*
+
+COPY docker/php.ini $PHP_INI_DIR/conf.d/zz-taskweaver.ini
+COPY docker/Caddyfile /etc/frankenphp/Caddyfile
 COPY docker/controller-entrypoint.sh /usr/local/bin/controller-entrypoint
 RUN chmod +x /usr/local/bin/controller-entrypoint
+
+# FrankenPHP listens on :80; TLS is terminated by the external proxy.
+ENV APP_ENV=prod \
+    APP_DEBUG=0 \
+    SERVER_NAME=:80
+
+EXPOSE 80
+
 ENTRYPOINT ["controller-entrypoint"]
+# Default only — the scheduler service overrides the command. The entrypoint
+# runs migrations first for any command, so one image serves both roles.
+CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile"]
+
+# ── Stage: worker — sandboxed LLM agent loop ──────────────────────────────
+FROM base AS worker
+
+# Non-root worker user (uid/gid 1000). Runtime hardening — read-only root
+# fs, no capabilities, no-new-privs, private-only network — is enforced by
+# the deployment (compose / CI), not baked in.
+RUN groupadd --system --gid 1000 worker \
+ && useradd  --system --uid 1000 --gid worker \
+             --home-dir /work --shell /usr/sbin/nologin worker
+
+WORKDIR /work
+COPY --from=worker-build /work /work
+RUN mkdir -p /work/tmp /work/ws \
+    && chown -R worker:worker /work
+
+USER worker
+
+ENTRYPOINT ["tini", "--", "php", "/work/bin/worker", "run"]
+
+# ── Stage: scheduler — controller image, role selected at runtime ─────────
+# Bit-identical to the controller; the stage only exists so bake/compose
+# can address the scheduler role by name. Run it with the scheduler command:
+#   docker run <image> bin/console app:scheduler:run
+FROM controller AS scheduler

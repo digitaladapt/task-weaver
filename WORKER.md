@@ -6,7 +6,8 @@ tests) and `src/` (51 controller tests). Verified end-to-end against a demo
 MCP server and scripted mock LLM (`dev/demo-mcp.php`, `dev/mock-llm.php`):
 provision → claim → LLM loop with tool calls through the controller proxy →
 multistep envelope into the final step → shape resolution. Docker images are
-written (`Dockerfile`, `docker/worker.Dockerfile`, `docker-compose.yml`) but
+written (`Dockerfile` multi-stage — controller, worker, scheduler targets
+via `docker-bake.hcl` — plus `docker-compose.yml`) but
 **not yet exercised** — they need a host that can run Docker-in-Docker.
 Companion to `../SPEC.md` (the controller).
 
@@ -684,9 +685,9 @@ deadline.
 ### Known gaps / future work
 
 - **Docker images untested on real Docker** — `Dockerfile` (controller) and
-  `docker/worker.Dockerfile` + `docker-compose.yml` are written and reviewed
-  but need a host with Docker to build/run and verify the hardened network
-  topology (no internet egress for the worker, controller dual-NIC).
+  `Dockerfile` (worker stage) + `docker-compose.yml` are written and
+  reviewed but need a host with Docker to build/run and verify the hardened
+  network topology (no internet egress for the worker, controller dual-NIC).
 - **Real LLM** — the loop is verified against the scripted mock
   (`dev/mock-llm.php`); pointing it at a real OpenAI-compatible endpoint
   (Ollama/vLLM) needs on-hardware verification.

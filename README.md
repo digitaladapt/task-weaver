@@ -180,10 +180,11 @@ CI does `cp .env.test .env` first to pin it for web requests.
 
 ## Deployment
 
-**Docker (not yet exercised):** `Dockerfile` (controller) and
-`docker/worker.Dockerfile` + `docker-compose.yml` (worker, hardened network —
-no internet egress, LLM on the private net, controller dual-NIC) are written
-but need a Docker-capable host to build and verify.
+**Docker:** a single multi-stage `Dockerfile` builds all three published
+variants (controller, worker, scheduler) via `docker-bake.hcl` — see
+[`docker-bake.hcl`](docker-bake.hcl). `docker-compose.yml` runs the full
+stack locally (controller + hardened worker — no internet egress, LLM on
+the private net — plus the optional scheduler profile).
 
 Production is a standard Symfony app: inject the env vars from
 [`.env.example`](.env.example) (no dotenv file in prod), run
