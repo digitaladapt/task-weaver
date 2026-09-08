@@ -62,6 +62,8 @@ final class RunCommand extends Command
     {
         $controller = (string) $input->getOption('controller');
         $token = (string) $input->getOption('enrollment-token');
+        $image = (string) $input->getOption('image');
+        $capabilities = (string) $input->getOption('capabilities');
         $name = (string) $input->getOption('name');
         $llmUrl = (string) $input->getOption('llm-url');
         $llmModel = (string) $input->getOption('llm-model');

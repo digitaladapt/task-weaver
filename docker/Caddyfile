@@ -24,9 +24,6 @@
 	# warm between requests but bounds any slow memory growth from
 	# container/ORM state that a careless service might accumulate.
 	php_server {
-		worker {
-			file /app/public/index.php
-			max_requests 500
-		}
+		worker /app/public/index.php
 	}
 }

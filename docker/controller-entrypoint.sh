@@ -12,7 +12,7 @@ php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migratio
 # Sample data is dev/test only; app:seed is a hard no-op with a warning
 # when APP_ENV=prod (guard lives in SeedCommand, so even a direct call
 # cannot seed a prod database).
-if [[ "$APP_ENV" != "prod" ]]; then
+if [ "$APP_ENV" != "prod" ]; then
     echo "Seeding sample data (idempotent, dev/test only)..."
     php bin/console app:seed
 fi

@@ -19,26 +19,22 @@
 # given, which is what lets the controller image double as the scheduler
 # without a second Dockerfile.
 
-ARG FRANKENPHP_IMAGE=dunglas/frankenphp:php8.4
-ARG COMPOSER_IMAGE=composer:2
-
 # ── Stage: base — shared runtime for every variant ────────────────────────
-FROM ${FRANKENPHP_IMAGE} AS base
+FROM dunglas/frankenphp:php8.4-trixie AS base
 
 # PHP extensions the controller needs (intl, pdo_sqlite), plus the small
 # runtime set every variant uses: ca-certificates (TLS for the worker's
 # LLM calls), curl (health checks), tini (worker PID 1 / signal handling).
-RUN install-php-extensions intl pdo pdo_sqlite \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl tini \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl tini unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Stage: controller-deps — controller composer deps (layer-cached) ──────
 FROM base AS controller-deps
 
 # ARGs are per-stage: redeclare so `COPY --from` can reference it.
-ARG COMPOSER_IMAGE
-COPY --from=${COMPOSER_IMAGE} /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 
@@ -66,8 +62,7 @@ RUN APP_ENV=prod APP_SECRET=build-secret bin/console cache:warmup || true \
 FROM base AS worker-deps
 
 # ARGs are per-stage: redeclare so `COPY --from` can reference it.
-ARG COMPOSER_IMAGE
-COPY --from=${COMPOSER_IMAGE} /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /work
 
@@ -119,7 +114,7 @@ RUN mkdir -p /work/tmp /work/ws \
 
 USER worker
 
-ENTRYPOINT ["tini", "--", "php", "/work/bin/worker", "run"]
+ENTRYPOINT ["tini", "--", "php", "/work/bin/worker", "taskweaver:run"]
 
 # ── Stage: scheduler — controller image, role selected at runtime ─────────
 FROM controller AS scheduler

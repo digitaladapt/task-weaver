@@ -65,6 +65,9 @@ services:
       context: .
       dockerfile: Dockerfile
       target: worker
+    depends_on:
+      controller:
+        condition: service_healthy
     environment:
       TASKWEAVER_CONTROLLER_URL: http://controller:80
       TASKWEAVER_ENROLLMENT_TOKEN: ${TASKWEAVER_ENROLLMENT_TOKEN:?TASKWEAVER_ENROLLMENT_TOKEN is required — copy .env.example to .env and set it}
@@ -114,7 +117,7 @@ services:
       target: scheduler
     depends_on:
       controller:
-        condition: service_started
+        condition: service_healthy
     environment:
       # Same prod boot-guard applies: the kernel refuses to start without a
       # real APP_SECRET (see Kernel::boot) — never hard-code a placeholder.
