@@ -85,3 +85,14 @@ services:
     App\Command\SeedCommand:
         arguments:
             $environment: '%kernel.environment%'
+
+    # API-key check belongs to the security firewall dispatcher, not the
+    # global one — that's what lets failed logins flow through the
+    # LoginThrottlingListener (max 5/min) instead of bypassing it.
+    App\Security\ApiKeyCheckListener:
+        autoconfigure: false
+        arguments:
+            $apiKeyRepository: '@App\Repository\ApiKeyRepository'
+            $requestStack: '@request_stack'
+        tags:
+            - { name: kernel.event_listener, event: Symfony\Component\Security\Http\Event\CheckPassportEvent, dispatcher: security.event_dispatcher.main, priority: 0 }

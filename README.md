@@ -10,7 +10,7 @@ the worker-facing contract.
 ## Stack
 
 - PHP 8.4 + Symfony 8.x
-- Doctrine ORM + DBAL on **SQLite** (`var/taskweaver.db`)
+- Doctrine ORM + DBAL on **SQLite** (`var/data/taskweaver.db`)
 - Twig (admin UI); scheduling via a tick command (cron, Compose profile, or systemd timer)
 - PHP MCP client for OpenAPI + streamable HTTP transports only
 
@@ -192,3 +192,30 @@ Production is a standard Symfony app: inject the env vars from
 `DATABASE_URL` and must be on a persistent volume. **Critically, set up one
 of the scheduler tick options from the Scheduling section** (cron, the Compose
 `scheduler` profile, or a systemd timer) so recurring tasks fire.
+
+## Backups
+
+TaskWeaver stores all state in a single SQLite file at `DATABASE_URL`
+(default: `var/data/taskweaver.db`, inside the compose volume). One
+scheduled run of [`bin/backup-db.sh`](bin/backup-db.sh) keeps it safe —
+the script is WAL-aware, so you can run it while the app is writing.
+
+Cron on the host (daily, keeps the last 14 snapshots under `var/backups`):
+
+    15 3 * * * cd /opt/taskweaver && bin/backup-db.sh
+
+Or with a custom target and retention:
+
+    bin/backup-db.sh /mnt/backup-share          # snapshots in /mnt/backup-share/<UTC-TS>/
+    BACKUP_KEEP=30 bin/backup-db.sh              # retain 30 instead of 14
+
+Each snapshot is validated with `PRAGMA quick_check` before the previous
+ones are rotated, so a partial write never clobbers the last good copy.
+
+**Restore.** Stop the app, swap the file, restart:
+
+    sqlite3 /path/to/taskweaver.db ".restore 'var/backups/<UTC-TS>/taskweaver.db'"
+    # or just:  cp var/backups/<UTC-TS>/taskweaver.db var/data/taskweaver.db
+
+If the DB lives inside a container, run the script against the host-side
+volume path (same file).
