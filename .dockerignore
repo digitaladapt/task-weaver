@@ -1,0 +1,25 @@
+# Never ship VCS metadata or machine-local state into the image.
+.git
+.gitea
+
+# Local runtime state (dev caches, logs, SQLite DBs, test snapshots). In the
+# prod image var/data is provided by a named volume; anything baked in would
+# sit masked underneath it and leak into pulled images.
+var/
+
+# Dev/test artifacts not needed at runtime.
+tests/
+*.local
+.env.dev.local
+compose.override.yaml
+docker-compose.override.yaml
+
+# Dependency dirs are rebuilt inside the image from composer.lock.
+vendor/
+worker/vendor/
+worker/bin/.phpunit/
+
+# Editor noise
+.idea
+.vscode
+*.swp

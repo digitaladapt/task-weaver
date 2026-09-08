@@ -1,0 +1,32 @@
+# TaskWeaver controller — served by FrankenPHP (worker mode).
+{
+	# FrankenPHP module is built into the dunglas/frankenphp image.
+	# Logs to stdout/stderr so `docker logs` shows request + worker output.
+	log
+}
+
+# Plain HTTP — TLS is terminated by the external reverse proxy in front.
+{$SERVER_NAME} {
+	root * /app/public
+	encode zstd gzip
+
+	# Security headers
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# Symfony front controller, kept in memory across requests (worker mode).
+	# num_threads defaults to 2× available CPU.
+	# max_requests recycles a worker after 500 requests — keeps the kernel
+	# warm between requests but bounds any slow memory growth from
+	# container/ORM state that a careless service might accumulate.
+	php_server {
+		worker {
+			file /app/public/index.php
+			max_requests 500
+		}
+	}
+}

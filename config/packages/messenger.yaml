@@ -5,11 +5,10 @@ framework:
         failure_transport: failed
 
         transports:
-            # The scheduler + dispatch flow uses the Doctrine transport backed
-            # by the same SQLite DB (auto_setup in .env).
-            async: '%env(MESSENGER_TRANSPORT_DSN)%'
+            # Task-due notifications run synchronously — the handler is a
+            # log line, no need for a worker. If something genuinely async
+            # lands (email, webhooks), re-add the Doctrine transport then.
             failed: 'doctrine://default?queue_name=failed'
 
         routing:
-            # Task-due notifications (logged by TaskDueHandler).
-            'App\Message\TaskDueMessage': async
+            'App\Message\TaskDueMessage': sync
