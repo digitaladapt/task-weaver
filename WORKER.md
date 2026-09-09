@@ -582,7 +582,7 @@ worker:
   mem_limit: 1g
   cpus: "1.0"
   tmpfs: [/work/tmp]                       # ephemeral scratch only
-  volumes: [worker-workspace:/work/ws]     # persisted per-task workspace
+  volumes: [worker-workspace:/work/workspace] # persisted per-task workspace
 ```
 
 (The LLM endpoint comes from controller-issued config, not a baked-in secret. When a provider key is configured, `config.llm_url` points at the controller's `/api/worker/llm` proxy instead — the worker's compose file doesn't change, and no secret is added to the worker environment.)
