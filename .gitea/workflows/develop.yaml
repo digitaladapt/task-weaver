@@ -24,6 +24,6 @@ jobs:
 
       - name: Build image
         env:
-          IMAGE: ${{ vars.DOCKERHUB_TARGET }}
-          VERSION: develop
-        run: docker buildx bake --push
+          DOCKERHUB_TARGET: ${{ vars.DOCKERHUB_TARGET }}
+          TAG: develop
+        run: docker buildx bake --file docker-bake.hcl --push

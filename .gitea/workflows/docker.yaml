@@ -28,7 +28,7 @@ jobs:
 
       - name: Build image
         env:
-          IMAGE: ${{ vars.DOCKERHUB_TARGET }}
+          DOCKERHUB_TARGET: ${{ vars.DOCKERHUB_TARGET }}
           VERSION: ${{ steps.version.outputs.VERSION }}
-          LATEST: "true"
-        run: docker buildx bake --push
+          TAG: latest
+        run: docker buildx bake --file docker-bake.hcl --push

@@ -130,7 +130,7 @@ final class TerminalTool implements InternalTool
         ];
 
         $process = @proc_open(
-            ['/bin/sh', '-c', $command],
+            ['/bin/bash', '-c', $command],
             $descriptors,
             $pipes,
             null,
