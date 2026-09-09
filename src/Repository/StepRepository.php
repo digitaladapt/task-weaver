@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Repository;
 
 use App\Entity\Step;
+
+use function array_diff;
+
 use DateTimeImmutable;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
@@ -16,6 +19,39 @@ use function in_array;
  */
 class StepRepository extends ServiceEntityRepository
 {
+    /**
+     * The step tags that are actual sandbox capabilities for a worker.
+     *
+     * External-tool tags (tags carried by live ToolDefs) are proxied by
+     * TaskWeaver for ANY worker, so they are subtracted here: the worker
+     * never needs to carry `weather` or `echo` to claim a step that uses
+     * those tools (SPEC.md → Claiming & Matching, Tool Wrangling).
+     *
+     * @param string[] $stepTags
+     * @param string[] $externalTags tags of live (non-removed, server enabled) ToolDefs
+     *
+     * @return string[]
+     */
+    public static function requiredCapabilityTags(array $stepTags, array $externalTags): array
+    {
+        return array_values(array_diff($stepTags, $externalTags));
+    }
+
+    /**
+     * Whether a worker can claim a step: its tags must cover the step's
+     * SANDBOX capability tags (worker tags ⊇ required capability tags).
+     * External-tool tags on the step are never a requirement — the
+     * controller's tool proxy covers them.
+     *
+     * @param string[] $workerTags
+     * @param string[] $stepTags
+     * @param string[] $externalTags
+     */
+    public static function workerCoversStep(array $workerTags, array $stepTags, array $externalTags): bool
+    {
+        return [] === array_diff(self::requiredCapabilityTags($stepTags, $externalTags), $workerTags);
+    }
+
     public function __construct(ManagerRegistry $registry)
     {
         parent::__construct($registry, Step::class);
@@ -30,13 +66,22 @@ class StepRepository extends ServiceEntityRepository
      *   - a step stuck `running` past its `expires_at` (stale → handled by
      *     the caller by failing it then re-selecting).
      *
-     * Claim matching is capability-based: a step is claimable by a worker if
-     * the worker has ALL of the step's tags (worker tags ⊇ step tags).
+     * Claim matching is capability-based (SPEC.md → Claiming & Matching):
+     * the worker must cover the step's SANDBOX capability tags (terminal,
+     * php, node, …) — anything the worker would run locally. Tags that name
+     * EXTERNAL tools (weather, echo, commands, …) are proxied by TaskWeaver
+     * for any worker, so they are never a claim requirement.
      *
      * @param string[] $workerTags
      */
     public function findClaimable(array $workerTags, DateTimeImmutable $now): ?Step
     {
+        // Live external-tool tags: every tag carried by a non-removed ToolDef
+        // on an enabled server. TaskWeaver can proxy these for any worker.
+        $externalTags = $this->getEntityManager()
+            ->getRepository(\App\Entity\ToolDef::class)
+            ->findLiveTagNames();
+
         // Load all pending + stale-running steps; tag matching is done in PHP.
         $candidates = $this->createQueryBuilder('s')
             ->select('s', 't')
@@ -54,9 +99,11 @@ class StepRepository extends ServiceEntityRepository
             ->getResult();
 
         foreach ($candidates as $step) {
-            // 1. Worker must have every tag the step requires.
-            $stepTags = $step->getTags();
-            if ([] !== array_diff($stepTags, $workerTags)) {
+            // 1. Worker capability check — the step's SANDBOX tags (step tags
+            //    minus live external-tool tags) must be ⊆ worker tags. The
+            //    external tool tags themselves are covered by TaskWeaver's
+            //    proxy, not the worker (SPEC.md → Tool Wrangling via Tags).
+            if (!self::workerCoversStep($workerTags, $step->getTags(), $externalTags)) {
                 continue;
             }
 

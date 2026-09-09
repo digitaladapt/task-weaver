@@ -30,4 +30,33 @@ class ToolDefRepository extends ServiceEntityRepository
     {
         return $this->findOneBy(['name' => $name, 'server' => $serverId]);
     }
+
+    /**
+     * Every tag currently carried by a live ToolDef (not removed, server
+     * enabled). These are the "external tool" tags: TaskWeaver can proxy
+     * any of them for ANY worker, so they are never a worker claim
+     * requirement (SPEC.md → Claiming & Matching).
+     *
+     * @return string[] unique tag names
+     */
+    public function findLiveTagNames(): array
+    {
+        $rows = $this->createQueryBuilder('t')
+            ->join('t.server', 's')
+            ->where('t.removedAt IS NULL')
+            ->andWhere('s.enabled = :enabled')
+            ->setParameter('enabled', true)
+            ->select('t.tags')
+            ->getQuery()
+            ->getArrayResult();
+
+        $tags = [];
+        foreach ($rows as $row) {
+            foreach ($row['tags'] ?? [] as $tag) {
+                $tags[] = $tag;
+            }
+        }
+
+        return array_values(array_unique($tags));
+    }
 }

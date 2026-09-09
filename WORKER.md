@@ -96,7 +96,9 @@ so the worker is a small, hardened loop and the sandbox stays genuinely dumb.
    prompt override). Both sides share one config source: the controller.
 3. It claims by capability: `POST /api/worker/claim`. Matching uses the
    **server-assigned** tags/tools noted at provision time — never anything the
-   worker declares at runtime.
+   worker declares at runtime. Only SANDBOX capability tags are matched;
+   external-tool tags (weather, echo, …) are proxied by TaskWeaver and never
+   required of the worker.
 4. It fetches task detail + steps (**with `is_final`**) + per-step allowed
    tool schemas (annotated **internal** vs **external**).
 5. **Only two shapes:** a single step, or N parallel steps followed by one

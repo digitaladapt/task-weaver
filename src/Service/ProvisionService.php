@@ -131,6 +131,12 @@ final class ProvisionService
             // Local dev worker able to claim the seeded sample tasks
             // (including the demo tool gauntlet).
             'dev-worker' => ['terminal', 'echo', 'weather', 'demo-echo', 'demo-random', 'demo-time'],
+            // The published reference worker (compose default
+            // digitaladapt/task-weaver:latest-worker) ships the terminal
+            // sandbox tool, so it always earns the `terminal` capability.
+            // External tool tags are NOT in this map — they are proxy
+            // concerns, never worker claim requirements (SPEC.md → Claiming).
+            'task-weaver' => ['terminal'],
         ];
 
         $image = (string) ($descriptor['image'] ?? '');

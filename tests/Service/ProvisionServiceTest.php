@@ -122,6 +122,22 @@ final class ProvisionServiceTest extends TestCase
         }
     }
 
+    public function testPublishedWorkerImageIsKnownAndCarriesTerminal(): void
+    {
+        // The compose default for the reference worker (docker-bake contract:
+        // digitaladapt/task-weaver:latest-worker) must be a KNOWN image, not
+        // a light worker with no capabilities. It ships the terminal sandbox
+        // tool, so it earns the terminal tag + internal tool. External tool
+        // tags (weather/echo/…) are deliberately NOT granted here — those are
+        // proxy concerns, not worker capabilities (SPEC.md → Claiming).
+        $result = $this->service()->provision('enrollment-token', 'worker-1', ['image' => 'digitaladapt/task-weaver:latest-worker']);
+
+        self::assertContains('terminal', $result['tags']);
+        self::assertContains('terminal', $result['internal_tools']);
+        self::assertNotContains('weather', $result['tags']);
+        self::assertNotContains('echo', $result['tags']);
+    }
+
     public function testLlmAuthConfiguredDirectlyWhenNoKey(): void
     {
         $result = $this->service()->provision('enrollment-token', 'dev-worker', []);
