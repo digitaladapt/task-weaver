@@ -95,6 +95,14 @@ ENV APP_ENV=prod \
 
 EXPOSE 80
 
+# Explicit healthcheck for the web controller. The upstream base image
+# declares `curl -f http://localhost:2019/metrics` (Caddy's local admin
+# endpoint) and we inherit it by default — we restate it here (same probe)
+# so the three variants read consistently and we don't silently depend on
+# the upstream default changing under us.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:2019/metrics || exit 1
+
 ENTRYPOINT ["controller-entrypoint"]
 
 # ── Stage: worker — sandboxed LLM agent loop ──────────────────────────────
@@ -116,7 +124,21 @@ USER worker
 
 ENTRYPOINT ["tini", "--", "php", "/work/bin/worker", "taskweaver:run"]
 
+# The upstream base image declares an HTTP healthcheck (`curl` at
+# localhost:2019) — a CLI worker never listens on HTTP, so it would always
+# report unhealthy. Probe the actual process instead: the run loop lives as
+# `php /work/bin/worker taskweaver:run`. The `[r]` bracket trick keeps the
+# healthcheck's own `sh -c` command line from matching itself.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD grep -qa "taskweaver:[r]un" /proc/[0-9]*/cmdline
+
 # ── Stage: scheduler — controller image, role selected at runtime ─────────
 FROM controller AS scheduler
 
 ENTRYPOINT ["tini", "--", "php", "/app/bin/console", "app:scheduler:run"]
+
+# Same story as the worker stage: the scheduler is a CLI daemon with no
+# HTTP server, so the inherited FrankenPHP healthcheck would always fail.
+# Probe the `app:scheduler:run` process instead (bracket trick: no self-match).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD grep -qa "app:scheduler:[r]un" /proc/[0-9]*/cmdline
