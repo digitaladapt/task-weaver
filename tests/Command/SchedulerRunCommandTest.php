@@ -15,7 +15,6 @@ use Doctrine\ORM\QueryBuilder;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
-use Symfony\Component\Messenger\MessageBusInterface;
 
 /**
  * app:scheduler:run daemon semantics.
@@ -59,7 +58,6 @@ final class SchedulerRunCommandTest extends TestCase
         $scheduler = new SchedulerService(
             $this->em,
             $this->createStub(TaskRepository::class),
-            $this->createStub(MessageBusInterface::class),
             new TimezoneService('UTC'),
         );
 
