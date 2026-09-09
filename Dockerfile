@@ -109,7 +109,7 @@ RUN groupadd --system --gid 1000 worker \
 
 WORKDIR /work
 COPY --from=worker-build /work /work
-RUN mkdir -p /work/tmp /work/ws \
+RUN mkdir -p /work/tmp /work/workspace \
     && chown -R worker:worker /work
 
 USER worker

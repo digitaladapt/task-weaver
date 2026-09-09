@@ -25,20 +25,23 @@
 # The worker provisions itself on boot using TASKWEAVER_ENROLLMENT_TOKEN
 # (must match the controller's env value).
 
+networks:
+  # Internal: no outbound route for anything attached to it. The controller
+  # bridges it to the outside world (worker API + proxied LLM channel).
+  taskweaver-private:
+    internal: true
+
 services:
   controller:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: controller
+    image: digitaladapt/task-weaver:latest
     environment:
       APP_ENV: ${APP_ENV:-prod}
       # Core secrets — required, no defaults. Generate with:
       #   php -r "echo bin2hex(random_bytes(32));"
       APP_SECRET: ${APP_SECRET:?APP_SECRET is required — copy .env.example to .env and set it}
       TASKWEAVER_ENROLLMENT_TOKEN: ${TASKWEAVER_ENROLLMENT_TOKEN:?TASKWEAVER_ENROLLMENT_TOKEN is required — copy .env.example to .env and set it}
-      TASKWEAVER_LLM_URL: ${TASKWEAVER_LLM_URL:-http://llm:11434/v1}
-      TASKWEAVER_LLM_MODEL: ${TASKWEAVER_LLM_MODEL:-llama3.1}
+      TASKWEAVER_LLM_URL: ${TASKWEAVER_LLM_URL:-http://llm:8080/v1}
+      TASKWEAVER_LLM_MODEL: ${TASKWEAVER_LLM_MODEL:-Qwen3.5-4B}
       TASKWEAVER_TIMEZONE: ${TASKWEAVER_TIMEZONE:-}
       # Set TASKWEAVER_LLM_API_KEY to switch workers to the proxied channel
       # (workers then send LLM traffic via the controller's /api/worker/llm).
@@ -48,7 +51,7 @@ services:
       # base .env.dist only sets APP_ENV=dev) so they must be injected here.
       DATABASE_URL: ${DATABASE_URL:-sqlite:///%kernel.project_dir%/var/data/taskweaver.db}
     volumes:
-      - controller-data:/app/var/data
+      - controller-data:/app/var
     ports:
       # Bind localhost-only by default so a freshly-upped host doesn't expose
       # the admin UI to the LAN. Publish/forward as your front proxy requires.
@@ -59,14 +62,11 @@ services:
     restart: unless-stopped
 
   worker:
-    build:
-      # Same single Dockerfile as the controller; the worker stage carries
-      # no secrets and runs as a non-root user (WORKER.md §2 hardening).
-      context: .
-      dockerfile: Dockerfile
-      target: worker
+    image: digitaladapt/task-weaver:latest-worker
     depends_on:
       controller:
+        condition: service_healthy
+      llm:
         condition: service_healthy
     environment:
       TASKWEAVER_CONTROLLER_URL: http://controller:80
@@ -75,7 +75,7 @@ services:
       # Descriptor identity reported at provision time. Known images get
       # server-mapped tags; unknown images are "light workers" that must
       # declare their capabilities to be trusted with anything.
-      TASKWEAVER_WORKER_IMAGE: ${TASKWEAVER_WORKER_IMAGE:-taskweaver/dev-worker:latest}
+      TASKWEAVER_WORKER_IMAGE: ${TASKWEAVER_WORKER_IMAGE:-digitaladapt/task-weaver:latest-worker}
       WORKER_CAPABILITIES: ${WORKER_CAPABILITIES:-}
     # --- WORKER.md §2 hardening ---
     read_only: true
@@ -85,7 +85,7 @@ services:
     tmpfs:
       - /work/tmp
     volumes:
-      - worker-workspace:/work/ws
+      - worker-workspace:/work/workspace
     mem_limit: 1g
     cpus: "1.0"
     # The worker's ONLY network is the internal private one: no internet,
@@ -97,9 +97,15 @@ services:
   # Local LLM (Ollama). Optional — comment out if you use a keyed provider
   # (then set TASKWEAVER_LLM_API_KEY on the controller instead).
   llm:
-    image: ollama/ollama:latest
+    command:
+      - --models-preset
+      - /config/models.ini
+      - --port
+      - "8080"
+    image: ghcr.io/ggml-org/llama.cpp:server
     volumes:
-      - ollama-models:/root/.ollama
+      - ./models.ini:/config/models.ini
+      - llm-models:/models
     networks:
       - taskweaver-private
     restart: unless-stopped
@@ -111,10 +117,7 @@ services:
   # app:scheduler:tick instead. It shares the controller image and runs the
   # same migrations in the entrypoint, so it cannot drift from the web app.
   scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: scheduler
+    image: digitaladapt/task-weaver:latest-scheduler
     depends_on:
       controller:
         condition: service_healthy
@@ -129,19 +132,13 @@ services:
       TASKWEAVER_TIMEZONE: ${TASKWEAVER_TIMEZONE:-}
       DATABASE_URL: ${DATABASE_URL:-sqlite:///%kernel.project_dir%/var/data/taskweaver.db}
     volumes:
-      - controller-data:/app/var/data
+      - controller-data:/app/var:ro
     networks:
       - taskweaver-private
-    profiles: ["scheduler"]
     restart: unless-stopped
-
-networks:
-  # Internal: no outbound route for anything attached to it. The controller
-  # bridges it to the outside world (worker API + proxied LLM channel).
-  taskweaver-private:
-    internal: true
 
 volumes:
   controller-data:
   worker-workspace:
-  ollama-models:
+  llm-config:
+  llm-models:
