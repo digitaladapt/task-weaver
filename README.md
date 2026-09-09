@@ -138,9 +138,13 @@ It **abandons a step on any 401/403 denial** — no retry, no result report.
 (Point `--controller` at `http://127.0.0.1:8987` for the local dev server in
 the Quick start above, or at your deployed controller otherwise.)
 
-The default descriptor requests the `dev-worker` image variant so the worker
-is provisioned with the tags (`terminal`, `echo`, `weather`) needed to claim
-the seeded sample tasks out of the box.
+The default descriptor requests the `dev-worker` image variant, which is
+provisioned with the same tags as the seeded sample tasks out of the box
+(dev-only convenience). In production the reference worker image
+(`digitaladapt/task-weaver:latest-worker`) is recognized and provisioned
+with `terminal`; external-tool tags (`echo`, `weather`, …) are matched by
+TaskWeaver's tool proxy, not by the worker, so no worker needs to carry
+them to claim a task that uses those tools.
 
 The `terminal` internal tool is a **real sandboxed runner**: commands execute
 via `proc_open` inside the worker container with a hard timeout and output
