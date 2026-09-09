@@ -279,7 +279,7 @@ Tag matching is the only mechanism for tool resolution. Three tag-bearing object
 - **ToolDefs** list the tags describing what they do.
 - **Workers** list the tags describing the base tools their sandbox image ships with (everything has `terminal`; variants add `php`, `node`, etc.).
 
-A step may call ToolDef `T` iff `T.tags ∩ step.tags ≠ ∅`. A worker may claim a task iff the union of its own tags covers everything the task exercises externally via TaskWeaver *and* internally via its sandbox image. Matching is deterministic and static.
+A step may call ToolDef `T` iff `T.tags ∩ step.tags ≠ ∅`. A worker may claim a task iff its tags cover the task's SANDBOX capability tags (worker tags ⊇ step tags minus live external-tool tags). External-tool tags (`weather`, `echo`, …) are never a claim requirement: TaskWeaver's proxy executes them for any worker. Matching is deterministic and static.
 
 ## Worker ↔ TaskWeaver API
 
@@ -365,7 +365,7 @@ Tool-call granularity is captured twice: the LM's request (`tool_requested`) and
 ## Claiming & Matching (tag-based)
 
 1. Worker provisions (`POST /api/worker/provision`), then claims (`POST /api/worker/claim`); matching uses **server-assigned** tags/internal-tools, not anything the worker claims at runtime.
-2. TaskWeaver computes each candidate task's tool demand = union of step tags, mapped to ToolDefs it can proxy. The worker must be able to cover the task: external tools via TaskWeaver's proxy (TaskWeaver always holds these) and internal tools via its noted set.
+2. TaskWeaver computes each candidate task's tool demand = union of step tags, mapped to ToolDefs it can proxy. The worker must be able to cover the task: external tools via TaskWeaver's proxy (TaskWeaver always holds these — so external-tool tags are never a worker claim requirement) and internal tools via its noted set.
 3. TaskWeaver picks the highest-priority `ready` task it can give a capable match for (next in line — no pools, no task lists to workers).
 4. Returns task + steps + the flattened allowed tool schemas (from ToolDefs whose tags intersect step tags) so the LLM knows what it may call. **Schemas are not compressed/condensed by TaskWeaver** — concise tool definitions are already authored on the MCP-server side.
 5. Task transitions `ready → running`.
