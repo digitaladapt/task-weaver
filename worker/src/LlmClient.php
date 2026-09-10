@@ -20,9 +20,13 @@ use Throwable;
  *
  * Two channels (WORKER.md → The LLM channel):
  *  - direct: the worker talks to the local LLM itself (no key, private net);
+ *    baseUrl is the LLM base (e.g. http://llm:8080/v1) and /chat/completions
+ *    is appended.
  *  - proxy:  the worker POSTs payloads to the controller's /api/worker/llm
  *            route and authenticates with its Tier-1 worker key — the
  *            controller holds the provider key, the worker never does.
+ *            baseUrl is the controller-issued FULL endpoint, so pass
+ *            ['full_endpoint' => true] to skip the /chat/completions suffix.
  *
  * Hardened for real LLM use:
  *  - retries with bounded exponential backoff + jitter on transport errors
@@ -43,18 +47,26 @@ final class LlmClient
 
     private int $contextBudget = 7500;
 
+    private bool $fullEndpoint = false;
+
     /**
-     * @param array{retries?: int, backoff_base_ms?: int} $options
+     * @param array{retries?: int, backoff_base_ms?: int, full_endpoint?: bool} $options
      */
     public function __construct(
         private readonly string $baseUrl,
         private readonly string $model = 'Qwen3.5-4B',
         private readonly ?string $bearerToken = null,
         array $options = [],
+        ?HttpClientInterface $http = null,
     ) {
-        $this->http = HttpClient::create(['timeout' => 300]);
+        $this->http = $http ?? HttpClient::create(['timeout' => 300]);
         $this->retriesLeft = max(1, (int) ($options['retries'] ?? 3));
         $this->backoffBaseMs = max(100, (int) ($options['backoff_base_ms'] ?? 500));
+        // Proxy channel: the controller-issued URL is ALREADY the full
+        // endpoint (it accepts the whole chat payload, no /chat/completions
+        // suffix). Direct channel: the URL is a base (e.g. .../v1) and the
+        // client appends /chat/completions.
+        $this->fullEndpoint = (bool) ($options['full_endpoint'] ?? false);
     }
 
     /**
@@ -186,6 +198,11 @@ final class LlmClient
 
     private function endpoint(): string
     {
+        if ($this->fullEndpoint) {
+            // Controller-issued proxy URL is already the full endpoint.
+            return $this->baseUrl;
+        }
+
         return rtrim($this->baseUrl, '/').'/chat/completions';
     }
 }

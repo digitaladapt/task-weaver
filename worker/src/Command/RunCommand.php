@@ -141,7 +141,11 @@ final class RunCommand extends Command
         $llmAuth = is_string($config['llm_auth'] ?? null) ? $config['llm_auth'] : 'direct';
         $bearerToken = ('proxy' === $llmAuth) ? $client->workerKey() : null;
 
-        $llm = new LlmClient($llmUrl, $llmModel, $bearerToken);
+        // The controller issues a FULL endpoint for the proxy channel
+        // (/api/worker/llm — it accepts the whole chat payload, exactly like
+        // an OpenAI-compatible /chat/completions). In proxy mode the worker
+        // must NOT append /chat/completions again.
+        $llm = new LlmClient($llmUrl, $llmModel, $bearerToken, ['full_endpoint' => 'proxy' === $llmAuth]);
 
         // Context budget from the controller-issued config.
         $budget = ContextBudget::fromConfig($config);

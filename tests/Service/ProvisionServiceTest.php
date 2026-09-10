@@ -17,7 +17,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class ProvisionServiceTest extends TestCase
 {
-    private function service(?Worker $existing = null, bool $llmProxied = false): ProvisionService
+    private function service(?Worker $existing = null, string $llmApiKey = ''): ProvisionService
     {
         $repo = $this->createStub(WorkerRepository::class);
         $repo->method('findOneBy')->willReturn($existing);
@@ -36,7 +36,7 @@ final class ProvisionServiceTest extends TestCase
             'http://llm:8080/v1',
             'Qwen3.5-4B',
             null,
-            $llmProxied,
+            $llmApiKey,
         );
     }
 
@@ -149,9 +149,23 @@ final class ProvisionServiceTest extends TestCase
 
     public function testLlmAuthProxiedWhenKeyConfigured(): void
     {
-        $result = $this->service(null, true)->provision('enrollment-token', 'dev-worker', []);
+        $result = $this->service(null, 'sk-proj-real-looking-key-123456')->provision('enrollment-token', 'dev-worker', []);
 
         self::assertSame('proxy', $result['config']['llm_auth']);
         self::assertSame('/api/worker/llm', $result['config']['llm_url']);
+    }
+
+    public function testLlmAuthIsProxiedForRealApiKeyString(): void
+    {
+        // Regression: the env wiring used to cast the key with
+        // env(bool:) — filter_var('sk-proj-...', FILTER_VALIDATE_BOOL)
+        // is FALSE, so a REAL api key string silently left the worker in
+        // 'direct' mode. Presence of a non-empty key must mean proxy.
+        foreach (['sk-proj-abc123XYZ', 'my-super-secret-key-42'] as $key) {
+            $result = $this->service(null, $key)->provision('enrollment-token', 'dev-worker', []);
+
+            self::assertSame('proxy', $result['config']['llm_auth']);
+            self::assertSame('/api/worker/llm', $result['config']['llm_url']);
+        }
     }
 }

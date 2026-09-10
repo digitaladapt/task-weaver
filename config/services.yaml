@@ -71,7 +71,13 @@ services:
             $llmUrl: '%env(TASKWEAVER_LLM_URL)%'
             $llmModel: '%env(TASKWEAVER_LLM_MODEL)%'
             $systemPromptOverride: '%env(TASKWEAVER_SYSTEM_PROMPT_OVERRIDE)%'
-            $llmProxied: '%env(bool:TASKWEAVER_LLM_API_KEY)%'
+            # Presence of a provider key decides the LLM channel (proxy vs
+            # direct). NOTE: `env(bool:...)` would cast the key string via
+            # filter_var(FILTER_VALIDATE_BOOL) — a real key like
+            # "sk-proj-..." is NOT a valid boolean token, so it always
+            # evaluated to FALSE and workers were never told to proxy.
+            # We pass the raw key string; ProvisionService decides.
+            $llmApiKey: '%llm_api_key%'
 
     # Step timeout for the workflow service.
     App\Service\TaskWorkflowService:
