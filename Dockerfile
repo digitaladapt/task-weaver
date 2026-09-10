@@ -1,23 +1,17 @@
 # syntax=docker/dockerfile:1.7
 #
-# TaskWeaver — one Dockerfile, three published runtime variants:
+# TaskWeaver — one Dockerfile, two published runtime variants:
 #
 #   controller  — Symfony admin UI + worker API, served by FrankenPHP in
 #                 worker mode (the kernel stays warm across requests).
 #                 Also published/referenced as `latest`.
 #   worker      — the sandboxed LLM agent loop (CLI, non-root, no HTTP).
-#   scheduler   — runs (`bin/console app:scheduler:run`);
 #
 # Build the whole set from docker-bake.hcl:
 #   docker buildx bake            # build all targets (no push)
 #   docker buildx bake --push     # build and push all targets
 #   docker buildx bake controller # single target
 #   docker buildx bake --print    # show what would be built
-#
-# Runtime role selection is a container command (compose `command:`) — the
-# controller entrypoint runs migrations first and then execs whatever it is
-# given, which is what lets the controller image double as the scheduler
-# without a second Dockerfile.
 
 # ── Stage: base — shared runtime for every variant ────────────────────────
 FROM dunglas/frankenphp:php8.4-trixie AS base
@@ -137,14 +131,3 @@ ENTRYPOINT ["tini", "--", "php", "/work/bin/worker", "taskweaver:run"]
 # healthcheck's own `sh -c` command line from matching itself.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD grep -qa "taskweaver:[r]un" /proc/[0-9]*/cmdline
-
-# ── Stage: scheduler — controller image, role selected at runtime ─────────
-FROM controller AS scheduler
-
-ENTRYPOINT ["tini", "--", "php", "/app/bin/console", "app:scheduler:run"]
-
-# Same story as the worker stage: the scheduler is a CLI daemon with no
-# HTTP server, so the inherited FrankenPHP healthcheck would always fail.
-# Probe the `app:scheduler:run` process instead (bracket trick: no self-match).
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD grep -qa "app:scheduler:[r]un" /proc/[0-9]*/cmdline

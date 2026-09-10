@@ -24,15 +24,9 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  *   bin/console app:scheduler:run [--interval 60]
  *
  * Keeps the app:scheduler:tick logic alive in a loop, so scheduling works
- * with zero external cron: run it as its own compose service, systemd
- * service, or plain background process. Each iteration is a full tick —
+ * with zero external cron: runs in the controller docker container.
+ * Each iteration is a full tick —
  * marks due recurring tasks ready and advances their next_run_at.
- *
- * Prefer this over cron * * * * * app:scheduler:tick when TaskWeaver runs
- * in Docker: no cron daemon inside the controller container, no host cron
- * with container-exec complexity — just another service in the compose
- * file. And when it stops, the whole deployment knows: a dead scheduler
- * is a dead service to supervise, not a silently missed cron line.
  *
  * A tick missed while the daemon was down is recovered on the next one:
  * isDue() checks next_run_at <= now, so a due task stays due until the

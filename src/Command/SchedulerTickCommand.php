@@ -15,11 +15,10 @@ use Symfony\Component\Console\Output\OutputInterface;
  * Runs the task scheduler tick once.
  *
  * Marks due recurring tasks ready and advances their next_run_at. Intended to
- * be invoked every minute by cron (SPEC.md → Scheduling); it does the tick
- * synchronously rather than round-tripping through the Messenger queue, so a
- * single cron line is sufficient — no separate `messenger:consume` process
- * needs to be running for scheduling to work.
+ * be invoked every minute SchedulerRunCommand, which automatically runs in the
+ * controller's Docker container.
  *
+ * If using application without Docker, suggest running a cron such as this:
  *   * * * * * cd /path/to/taskweaver && bin/console app:scheduler:tick
  */
 #[AsCommand(name: 'app:scheduler:tick', description: 'Run the task scheduler tick (check for due recurring tasks)')]

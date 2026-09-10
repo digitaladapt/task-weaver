@@ -110,33 +110,6 @@ services:
       - taskweaver-private
     restart: unless-stopped
 
-  # Long-running scheduler driver: ticks the scheduler every minute so
-  # recurring tasks fire without any host cron. Opt-in via compose profiles
-  # (docker compose --profile scheduler up -d); without the profile the
-  # deployment relies on an external cron / systemd timer calling
-  # app:scheduler:tick instead. It shares the controller image and runs the
-  # same migrations in the entrypoint, so it cannot drift from the web app.
-  scheduler:
-    image: digitaladapt/task-weaver:latest-scheduler
-    depends_on:
-      controller:
-        condition: service_healthy
-    environment:
-      # Same prod boot-guard applies: the kernel refuses to start without a
-      # real APP_SECRET (see Kernel::boot) — never hard-code a placeholder.
-      APP_ENV: ${APP_ENV:-prod}
-      APP_SECRET: ${APP_SECRET:?APP_SECRET is required — copy .env.example to .env and set it}
-      # Scheduler never talks to workers directly, but the value must match
-      # the controller's so enrolment stays consistent across the deployment.
-      TASKWEAVER_ENROLLMENT_TOKEN: ${TASKWEAVER_ENROLLMENT_TOKEN:?TASKWEAVER_ENROLLMENT_TOKEN is required — copy .env.example to .env and set it}
-      TASKWEAVER_TIMEZONE: ${TASKWEAVER_TIMEZONE:-}
-      DATABASE_URL: ${DATABASE_URL:-sqlite:///%kernel.project_dir%/var/data/taskweaver.db}
-    volumes:
-      - controller-data:/app/var
-    networks:
-      - taskweaver-private
-    restart: unless-stopped
-
 volumes:
   controller-data:
   worker-workspace:

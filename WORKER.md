@@ -6,7 +6,7 @@ tests) and `src/` (51 controller tests). Verified end-to-end against a demo
 MCP server and scripted mock LLM (`dev/demo-mcp.php`, `dev/mock-llm.php`):
 provision → claim → LLM loop with tool calls through the controller proxy →
 multistep envelope into the final step → shape resolution. Docker images are
-written (`Dockerfile` multi-stage — controller, worker, scheduler targets
+written (`Dockerfile` multi-stage — controller, worker, targets
 via `docker-bake.hcl` — plus `docker-compose.yml`) but
 **not yet exercised** — they need a host that can run Docker-in-Docker.
 Companion to `../SPEC.md` (the controller).

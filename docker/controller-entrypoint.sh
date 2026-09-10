@@ -1,6 +1,5 @@
 #!/bin/sh
-# Controller container entrypoint: migrate then serve — or, when a custom
-# command is given (e.g. the scheduler driver service), run that instead.
+# Controller container entrypoint: migrate, start scheduler then serve.
 set -eu
 
 WORKDIR=/app
@@ -20,6 +19,9 @@ fi
 # cache warmup failure should not block us from running
 echo "Warming prod cache..."
 php bin/console cache:warmup || true
+
+echo "Starting scheduler runner..."
+php bin/console app:scheduler:run &
 
 echo "Starting FrankenPHP..."
 exec frankenphp run --config "/etc/frankenphp/Caddyfile"

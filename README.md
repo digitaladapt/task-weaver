@@ -59,7 +59,9 @@ Routes are plain `app_*` HTML routes; the worker-facing API lives under
 ## Scheduling
 
 Recurring tasks are driven by a scheduler **tick** that runs every minute.
-There are three ways to run it — pick one:
+Which is automatically handled by the controller docker container.
+
+If you are running this in a non-Docker host, you should do one of the following:
 
 **1. Cron (default, one-shot per minute):**
 
@@ -67,16 +69,7 @@ There are three ways to run it — pick one:
 * * * * * cd /path/to/taskweaver && bin/console app:scheduler:tick
 ```
 
-**2. Docker Compose (long-running scheduler driver):**
-
-```bash
-docker compose --profile scheduler up -d
-```
-
-This starts a `scheduler` container running `bin/console app:scheduler:run` —
-a daemon that ticks in a loop (default every 60s). No host cron needed.
-
-**3. systemd timer (non-Docker host):**
+**2. systemd timer (non-Docker host):**
 
 ```ini
 # /etc/systemd/system/taskweaver-scheduler.timer
@@ -184,19 +177,19 @@ CI does `cp .env.test .env` first to pin it for web requests.
 
 ## Deployment
 
-**Docker:** a single multi-stage `Dockerfile` builds all three published
-variants (controller, worker, scheduler) via `docker-bake.hcl` — see
+**Docker:** a single multi-stage `Dockerfile` builds all both published
+variants (controller, worker) via `docker-bake.hcl` — see
 [`docker-bake.hcl`](docker-bake.hcl). `docker-compose.yml` runs the full
 stack locally (controller + hardened worker — no internet egress, LLM on
-the private net — plus the optional scheduler profile).
+the private net).
 
 Production is a standard Symfony app: inject the env vars from
 [`.env.example`](.env.example) (no dotenv file in prod), run
 `composer install --no-dev --optimize-autoloader`, migrate, and serve
 `public/` behind the reverse proxy of your choice. SQLite lives at
 `DATABASE_URL` and must be on a persistent volume. **Critically, set up one
-of the scheduler tick options from the Scheduling section** (cron, the Compose
-`scheduler` profile, or a systemd timer) so recurring tasks fire.
+of the scheduler tick options from the Scheduling section** (cron, or a systemd timer)
+so recurring tasks fire, if you are not using Docker.
 
 ## Backups
 
