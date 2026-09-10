@@ -38,7 +38,7 @@ final class ProvisionService
         private readonly string $llmUrl = 'http://llm:8080/v1',
         private readonly string $llmModel = 'Qwen3.5-4B',
         private readonly ?string $systemPromptOverride = null,
-        private readonly bool $llmProxied = false,
+        private readonly string $llmApiKey = '',
     ) {
     }
 
@@ -70,14 +70,19 @@ final class ProvisionService
             $worker->setInternalTools($this->assignInternalTools($worker->getTags()));
         }
 
+        $proxied = '' !== $this->llmApiKey;
+
         $worker->setApiKey(KeyGenerator::generate());
         $worker->setConfig([
-            'llm_url' => $this->llmProxied ? '/api/worker/llm' : $this->llmUrl,
+            'llm_url' => $proxied ? '/api/worker/llm' : $this->llmUrl,
             // 'proxy' → the worker POSTs chat payloads to the controller and
             // authenticates with its Tier-1 worker key (the controller holds
             // the provider key). 'direct' → the worker talks to the local LLM
             // itself, no auth needed. WORKER.md → The LLM channel.
-            'llm_auth' => $this->llmProxied ? 'proxy' : 'direct',
+            // Determined by presence of a provider key — never a boolean cast
+            // of the key string (e.g. "sk-proj-..." is not FILTER_VALIDATE_BOOL
+            // truthy, which used to silently disable proxying).
+            'llm_auth' => $proxied ? 'proxy' : 'direct',
             'llm_model' => $this->llmModel,
             'system_prompt_override' => $this->systemPromptOverride,
             'max_rounds' => $this->maxRounds,
