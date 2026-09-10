@@ -132,7 +132,7 @@ services:
       TASKWEAVER_TIMEZONE: ${TASKWEAVER_TIMEZONE:-}
       DATABASE_URL: ${DATABASE_URL:-sqlite:///%kernel.project_dir%/var/data/taskweaver.db}
     volumes:
-      - controller-data:/app/var:ro
+      - controller-data:/app/var
     networks:
       - taskweaver-private
     restart: unless-stopped
