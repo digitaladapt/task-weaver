@@ -41,7 +41,7 @@ final class LlmClient
      */
     public function __construct(
         private readonly string $baseUrl,
-        private readonly string $model = 'llama3.1',
+        private readonly string $model = 'Qwen3.5-4B',
         private readonly ?string $bearerToken = null,
         array $options = [],
     ) {

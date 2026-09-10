@@ -16,8 +16,8 @@ parameters:
     # committed .env.dev / .env.test; production must inject a real one.
     # An unset token fails loudly at boot (Kernel guard) instead of
     # silently accepting a well-known dev value.
-    env(TASKWEAVER_LLM_URL): 'http://llm:11434/v1'
-    env(TASKWEAVER_LLM_MODEL): 'llama3.1'
+    env(TASKWEAVER_LLM_URL): 'http://llm:8080/v1'
+    env(TASKWEAVER_LLM_MODEL): 'Qwen3.5-4B'
     # Provider key for an external/keyed LLM. Empty → direct local LLM
     # channel (workers talk to TASKWEAVER_LLM_URL themselves). Set → the
     # controller proxies all worker LLM traffic via /api/worker/llm.

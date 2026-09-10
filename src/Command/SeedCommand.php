@@ -201,7 +201,7 @@ final class SeedCommand extends Command
         ], $t0);
 
         $e2 = $this->makeEvent($step2a, Event::TYPE_LLM_CALL, $worker, [
-            'model' => 'llama3.1',
+            'model' => 'Qwen3.5-4B',
             'provider' => 'local',
             'prompt_tokens' => 214,
             'completion_tokens' => 48,
@@ -238,7 +238,7 @@ final class SeedCommand extends Command
         ], $t5);
 
         $e7 = $this->makeEvent($step2b, Event::TYPE_LLM_CALL, $worker, [
-            'model' => 'llama3.1',
+            'model' => 'Qwen3.5-4B',
             'provider' => 'local',
             'prompt_tokens' => 389,
             'completion_tokens' => 61,
@@ -315,7 +315,7 @@ final class SeedCommand extends Command
         ], $u0);
 
         $this->makeEvent($step3, Event::TYPE_LLM_CALL, $worker, [
-            'model' => 'llama3.1',
+            'model' => 'Qwen3.5-4B',
             'provider' => 'local',
             'prompt_tokens' => 152,
             'completion_tokens' => 20,

@@ -216,7 +216,7 @@ start() {
     APP_DEBUG=1 \
     APP_SECRET="$DEV_SECRET" \
     DATABASE_URL="sqlite:///%kernel.project_dir%/${DEV_DB}" \
-    TASKWEAVER_LLM_URL="${TASKWEAVER_LLM_URL:-http://localhost:11434/v1}" \
+    TASKWEAVER_LLM_URL="${TASKWEAVER_LLM_URL:-http://localhost:8080/v1}" \
     TASKWEAVER_LLM_MODEL="${TASKWEAVER_LLM_MODEL:-dev-model}" \
     TASKWEAVER_LLM_API_KEY="${TASKWEAVER_LLM_API_KEY:-}" \
     TASKWEAVER_ENROLLMENT_TOKEN="${TASKWEAVER_ENROLLMENT_TOKEN:-dev-enrollment-token}" \
@@ -245,7 +245,7 @@ start() {
     APP_SECRET="$DEV_SECRET" \
     DATABASE_URL="sqlite:///%kernel.project_dir%/${DEV_DB}" \
     DEFAULT_URI="${TASKWEAVER_DEV_URL}" \
-    TASKWEAVER_LLM_URL="${TASKWEAVER_LLM_URL:-http://localhost:11434/v1}" \
+    TASKWEAVER_LLM_URL="${TASKWEAVER_LLM_URL:-http://localhost:8080/v1}" \
     TASKWEAVER_LLM_MODEL="${TASKWEAVER_LLM_MODEL:-dev-model}" \
     TASKWEAVER_LLM_API_KEY="${TASKWEAVER_LLM_API_KEY:-}" \
     TASKWEAVER_ENROLLMENT_TOKEN="${TASKWEAVER_ENROLLMENT_TOKEN:-dev-enrollment-token}" \

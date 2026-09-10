@@ -33,8 +33,8 @@ final class ProvisionServiceTest extends TestCase
             6750,
             1650,
             1,
-            'http://llm:11434/v1',
-            'llama3.1',
+            'http://llm:8080/v1',
+            'Qwen3.5-4B',
             null,
             $llmProxied,
         );
@@ -144,7 +144,7 @@ final class ProvisionServiceTest extends TestCase
         $result = $this->service()->provision('enrollment-token', 'dev-worker', []);
 
         self::assertSame('direct', $result['config']['llm_auth']);
-        self::assertSame('http://llm:11434/v1', $result['config']['llm_url']);
+        self::assertSame('http://llm:8080/v1', $result['config']['llm_url']);
     }
 
     public function testLlmAuthProxiedWhenKeyConfigured(): void

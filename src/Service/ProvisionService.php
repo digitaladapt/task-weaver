@@ -35,8 +35,8 @@ final class ProvisionService
         private readonly int $contextRequestSize,
         private readonly int $contextOutputBuffer,
         private readonly int $llmMaxConcurrency,
-        private readonly string $llmUrl = 'http://llm:11434/v1',
-        private readonly string $llmModel = 'llama3.1',
+        private readonly string $llmUrl = 'http://llm:8080/v1',
+        private readonly string $llmModel = 'Qwen3.5-4B',
         private readonly ?string $systemPromptOverride = null,
         private readonly bool $llmProxied = false,
     ) {

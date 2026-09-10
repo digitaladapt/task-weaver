@@ -119,8 +119,8 @@ composer install
 php bin/worker taskweaver:run \
   --controller http://127.0.0.1:8987 \
   --enrollment-token dev-enrollment-token \
-  --llm-url http://llm-host:11434/v1 \
-  --llm-model llama3.1 \
+  --llm-url http://llm-host:8080/v1 \
+  --llm-model Qwen3.5-4B \
   --name dev-worker
 ```
 

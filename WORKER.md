@@ -408,12 +408,12 @@ durable history is TaskWeaver's event + ToolCall records.
   "internal_tools": ["memory.search", "memory.store"],
   "config": {
     // No key configured → direct local LLM (worker talks to llm_url itself)
-    "llm_url": "http://llm:11434/v1",      // TASKWEAVER_LLM_URL, controller env var
+    "llm_url": "http://llm:8080/v1",      // TASKWEAVER_LLM_URL, controller env var
     "llm_auth": null,
     // Provider key configured (TASKWEAVER_LLM_API_KEY) → proxied channel:
     //   "llm_url": "http://controller:8080/api/worker/llm",
     //   "llm_auth": { "type": "proxy", "provider": "openai" },
-    "llm_model": "llama3.1",               // TASKWEAVER_LLM_MODEL, controller env var
+    "llm_model": "Qwen3.5-4B",               // TASKWEAVER_LLM_MODEL, controller env var
     "system_prompt_override": null,
     "step_timeout": 600   // TASKWEAVER_STEP_TIMEOUT, controller env var
     "context": { "request_size": 6000, "output_buffer_size": 1500 },
