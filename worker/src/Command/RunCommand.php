@@ -125,7 +125,7 @@ final class RunCommand extends Command
         $llmModel = $this->resolveVar($input, 'llm-model', 'TASKWEAVER_LLM_MODEL', 'Qwen3.5-4B', $config['llm_model'] ?? null);
 
         // use max_rounds from controller unless explicit worker override
-        $maxRounds = $this->resolveVar($input, 'max-rounds', 'TASKWEAVER_MAX_ROUNDS', (string) self::MAX_LLM_ROUNDS, $config['max_rounds'] ?? null);
+        $maxRounds = (int) $this->resolveVar($input, 'max-rounds', 'TASKWEAVER_MAX_ROUNDS', (string) self::MAX_LLM_ROUNDS, $config['max_rounds'] ?? null);
 
         $once = (bool) $input->getOption('once');
 
