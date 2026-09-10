@@ -39,7 +39,7 @@ use TaskWeaverWorker\Tool\TerminalTool;
 final class RunCommand extends Command
 {
     /** Bounded LLM round-trips per step before we give up on the model. */
-    private const MAX_LLM_ROUNDS = 20;
+    private const int MAX_LLM_ROUNDS = 50;
 
     /** Per-result token cap for tool results fed back to the model. */
     private const TOOL_RESULT_TOKEN_CAP = 1500;
@@ -47,43 +47,53 @@ final class RunCommand extends Command
     protected function configure(): void
     {
         $this
-            ->addOption('controller', null, InputOption::VALUE_REQUIRED, 'Controller base URL', getenv('TASKWEAVER_CONTROLLER_URL') ?: 'http://localhost:8000')
-            ->addOption('enrollment-token', null, InputOption::VALUE_REQUIRED, 'Tier-0 enrollment token', getenv('TASKWEAVER_ENROLLMENT_TOKEN') ?: '')
-            ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Worker name', getenv('WORKER_NAME') ?: 'dev-worker')
-            ->addOption('image', null, InputOption::VALUE_REQUIRED, 'Image identity reported to the controller at provision time', getenv('TASKWEAVER_WORKER_IMAGE') ?: 'taskweaver/dev-worker:latest')
-            ->addOption('capabilities', null, InputOption::VALUE_REQUIRED, 'Comma-separated sandbox capabilities this worker declares (e.g. terminal,php) — only honored for unknown images', getenv('WORKER_CAPABILITIES') ?: '')
-            ->addOption('llm-url', null, InputOption::VALUE_REQUIRED, 'Local LLM base URL', getenv('TASKWEAVER_LLM_URL') ?: 'http://llm:11434/v1')
-            ->addOption('llm-model', null, InputOption::VALUE_REQUIRED, 'Local LLM model', getenv('TASKWEAVER_LLM_MODEL') ?: 'llama3.1')
+            ->addOption('controller', null, InputOption::VALUE_REQUIRED, 'Controller base URL')
+            ->addOption('enrollment-token', null, InputOption::VALUE_REQUIRED, 'Tier-0 enrollment token')
+            ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Worker name')
+            ->addOption('image', null, InputOption::VALUE_REQUIRED, 'Image identity reported to the controller at provision time')
+            ->addOption('capabilities', null, InputOption::VALUE_REQUIRED, 'Comma-separated sandbox capabilities this worker declares (e.g. terminal,php) — only honored for unknown images')
+            ->addOption('llm-url', null, InputOption::VALUE_REQUIRED, 'Local LLM base URL')
+            ->addOption('llm-model', null, InputOption::VALUE_REQUIRED, 'Local LLM model')
             ->addOption('once', null, InputOption::VALUE_NONE, 'Claim and run one task, then exit')
-            ->addOption('max-rounds', null, InputOption::VALUE_REQUIRED, 'Max LLM rounds per step', (string) self::MAX_LLM_ROUNDS);
+            ->addOption('max-rounds', null, InputOption::VALUE_REQUIRED, 'Max LLM rounds per step');
+    }
+
+    /* order of resolution:
+     * 1. if worker invoked with "--<option> <value>" use that
+     * 2. if worker environment has "<OPTION>=<value>" use that
+     * 3. normal case: use the controller issued value
+     * 4. fallback to reasonable default value
+     * */
+    protected function resolveVar(InputInterface $input, string $optionName, string $envName, string $fallback, string|int|null $issued = null): string
+    {
+        if ($input->hasParameterOption("--$optionName")) {
+            return (string) $input->getOption($optionName);
+        }
+        $envVar = getenv($envName);
+        if (false !== $envVar && '' !== $envVar) {
+            return (string) $envVar;
+        }
+        if (null !== $issued && '' !== $issued) {
+            return (string) $issued;
+        }
+
+        return $fallback;
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $controller = (string) $input->getOption('controller');
-        $token = (string) $input->getOption('enrollment-token');
-        $image = (string) $input->getOption('image');
-        $capabilities = (string) $input->getOption('capabilities');
-        $name = (string) $input->getOption('name');
-        $llmUrl = (string) $input->getOption('llm-url');
-        $llmModel = (string) $input->getOption('llm-model');
-        $once = (bool) $input->getOption('once');
-        $maxRounds = max(1, (int) $input->getOption('max-rounds'));
+        $controller = $this->resolveVar($input, 'controller', 'TASKWEAVER_CONTROLLER_URL', 'http://controller:80');
+        $token = $this->resolveVar($input, 'enrollment-token', 'TASKWEAVER_ENROLLMENT_TOKEN', '');
+        $name = $this->resolveVar($input, 'name', 'WORKER_NAME', getenv('HOSTNAME') ?? 'worker-1');
+        $image = $this->resolveVar($input, 'image', 'TASKWEAVER_WORKER_IMAGE', 'digitaladapt/task-weaver:latest-worker');
+        $capabilityList = $this->resolveVar($input, 'capabilities', 'WORKER_CAPABILITIES', 'terminal');
+        $descriptor = [
+            'image' => $image,
+            'capabilities' => array_filter(array_map('trim', explode(',', $capabilityList))),
+        ];
 
         // --- Boot / provision ---
         $client = new ControllerClient($controller, $token);
-
-        // Descriptor: image identity + explicitly declared sandbox
-        // capabilities. Known variants (e.g. taskweaver/dev-worker) get
-        // server-mapped tags; unknown images are light workers that only
-        // get the capabilities they declare here. The worker never chooses
-        // its own tags — it can only declare what its sandbox ships.
-        $descriptor = ['image' => $image];
-        $capabilities = array_filter(array_map('trim', explode(',', $capabilities)));
-        if ($capabilities !== []) {
-            $descriptor['capabilities'] = $capabilities;
-        }
-
         $provisioned = $client->provision($name, $descriptor);
         $output->writeln(sprintf('Provisioned worker %s (tags: %s)', $provisioned['worker_id'] ?? '?', implode(',', $provisioned['tags'] ?? [])));
 
@@ -94,37 +104,30 @@ final class RunCommand extends Command
         // issued value unless the operator explicitly pointed this worker at
         // a different LLM via --llm-url (CLI) or TASKWEAVER_LLM_URL (env) —
         // a local-debug escape hatch.
-        $operatorOverride = $input->hasParameterOption('--llm-url', true)
-            || (($envUrl = getenv('TASKWEAVER_LLM_URL')) !== false && $envUrl !== '');
-        $issuedUrl = is_string($config['llm_url'] ?? null) ? $config['llm_url'] : '';
-        if (!$operatorOverride && $issuedUrl !== '') {
-            $llmUrl = $issuedUrl;
-        }
+        $llmUrl = $this->resolveVar($input, 'llm-url', 'TASKWEAVER_LLM_URL', 'http://llm:8080/v1', $config['llm_url'] ?? null);
+
+        // Same flow for the model: prefer the controller's issued value unless
+        // the operator explicitly overrode it via --llm-model (CLI) or
+        // TASKWEAVER_LLM_MODEL (env).
+        $llmModel = $this->resolveVar($input, 'llm-model', 'TASKWEAVER_LLM_MODEL', 'Qwen3.5-4B', $config['llm_model'] ?? null);
+
+        // use max_rounds from controller unless explicit worker override
+        $maxRounds = $this->resolveVar($input, 'max-rounds', 'TASKWEAVER_MAX_ROUNDS', (string) self::MAX_LLM_ROUNDS, $config['max_rounds'] ?? null);
+
+        $once = (bool) $input->getOption('once');
 
         // A relative issued URL (proxy mode: '/api/worker/llm') resolves
         // against the controller base URL.
         if (str_starts_with($llmUrl, '/')) {
-            $llmUrl = rtrim($controller, '/') . $llmUrl;
+            $llmUrl = rtrim($controller, '/').$llmUrl;
         }
 
         // LLM channel: 'direct' (local LLM, no key) or 'proxy' (controller's
         // /api/worker/llm route, worker key authenticates, controller holds
         // the provider key).
         $llmAuth = is_string($config['llm_auth'] ?? null) ? $config['llm_auth'] : 'direct';
-        $bearerToken = ($llmAuth === 'proxy') ? $client->workerKey() : null;
+        $bearerToken = ('proxy' === $llmAuth) ? $client->workerKey() : null;
 
-        // Same flow for the model: prefer the controller's issued value unless
-        // the operator explicitly overrode it via --llm-model (CLI) or
-        // TASKWEAVER_LLM_MODEL (env).
-        if (!$input->hasParameterOption('--llm-model', true)) {
-            $envModel = getenv('TASKWEAVER_LLM_MODEL');
-            if ($envModel === false || $envModel === '') {
-                $issuedModel = is_string($config['llm_model'] ?? null) ? $config['llm_model'] : '';
-                if ($issuedModel !== '') {
-                    $llmModel = $issuedModel;
-                }
-            }
-        }
         $llm = new LlmClient($llmUrl, $llmModel, $bearerToken);
 
         // Context budget from the controller-issued config.

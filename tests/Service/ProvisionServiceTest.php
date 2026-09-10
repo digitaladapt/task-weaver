@@ -28,6 +28,7 @@ final class ProvisionServiceTest extends TestCase
             $em,
             $repo,
             'enrollment-token',
+            50,
             1650,
             6750,
             1650,

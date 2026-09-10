@@ -7,6 +7,7 @@
 parameters:
     # TaskWeaver tunables — all from environment variables (SPEC.md → Configuration).
     # symfony/dotenv is dev-only; production injects real env vars.
+    env(TASKWEAVER_MAX_ROUNDS): '50'
     env(TASKWEAVER_STEP_TIMEOUT): '600'
     env(TASKWEAVER_CONTEXT_REQUEST_SIZE): '6000'
     env(TASKWEAVER_CONTEXT_OUTPUT_BUFFER): '1500'
@@ -62,6 +63,7 @@ services:
     App\Service\ProvisionService:
         arguments:
             $enrollmentToken: '%env(TASKWEAVER_ENROLLMENT_TOKEN)%'
+            $maxRounds: '%env(int:TASKWEAVER_MAX_ROUNDS)%'
             $stepTimeout: '%env(int:TASKWEAVER_STEP_TIMEOUT)%'
             $contextRequestSize: '%env(int:TASKWEAVER_CONTEXT_REQUEST_SIZE)%'
             $contextOutputBuffer: '%env(int:TASKWEAVER_CONTEXT_OUTPUT_BUFFER)%'

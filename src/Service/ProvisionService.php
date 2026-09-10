@@ -30,6 +30,7 @@ final class ProvisionService
         private readonly EntityManagerInterface $em,
         private readonly WorkerRepository $workers,
         private readonly string $enrollmentToken,
+        private readonly int $maxRounds,
         private readonly int $stepTimeout,
         private readonly int $contextRequestSize,
         private readonly int $contextOutputBuffer,
@@ -79,6 +80,7 @@ final class ProvisionService
             'llm_auth' => $this->llmProxied ? 'proxy' : 'direct',
             'llm_model' => $this->llmModel,
             'system_prompt_override' => $this->systemPromptOverride,
+            'max_rounds' => $this->maxRounds,
             'step_timeout' => $this->stepTimeout,
             'context' => [
                 'request_size' => $this->contextRequestSize,
