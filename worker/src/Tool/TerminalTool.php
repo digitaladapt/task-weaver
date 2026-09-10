@@ -4,7 +4,13 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker\Tool;
 
+use function is_resource;
+use function is_string;
+
 use RuntimeException;
+
+use function sprintf;
+use function strlen;
 
 /**
  * The `terminal` internal tool — sandbox shell access.
@@ -84,7 +90,7 @@ final class TerminalTool implements InternalTool
     {
         return [
             'type' => 'object',
-            'description' => 'Run a shell command inside the worker sandbox. Non-interactive, single command, subject to a ' . $this->timeoutSeconds . 's timeout and an output cap.',
+            'description' => 'Run a shell command inside the worker sandbox. Non-interactive, single command, subject to a '.$this->timeoutSeconds.'s timeout and an output cap.',
             'properties' => [
                 'command' => [
                     'type' => 'string',
@@ -99,12 +105,12 @@ final class TerminalTool implements InternalTool
     {
         $command = is_string($arguments['command'] ?? null) ? trim($arguments['command']) : '';
 
-        if ($command === '') {
+        if ('' === $command) {
             return ['ok' => false, 'error' => 'terminal: missing required "command" argument'];
         }
 
         $blocked = $this->matchesBlockedPattern($command);
-        if ($blocked !== null) {
+        if (null !== $blocked) {
             return [
                 'ok' => false,
                 'error' => sprintf('terminal: refused — command matches blocked pattern "%s". The sandbox protects the workspace; destructive disk-wide operations are not permitted.', $blocked),
@@ -114,7 +120,7 @@ final class TerminalTool implements InternalTool
         try {
             return $this->execute($command);
         } catch (RuntimeException $e) {
-            return ['ok' => false, 'error' => 'terminal: ' . $e->getMessage()];
+            return ['ok' => false, 'error' => 'terminal: '.$e->getMessage()];
         }
     }
 
@@ -153,7 +159,7 @@ final class TerminalTool implements InternalTool
         $deadline = microtime(true) + $this->timeoutSeconds;
 
         $open = [$pipes[1], $pipes[2]];
-        while ($open !== []) {
+        while ([] !== $open) {
             $remaining = $deadline - microtime(true);
             if ($remaining <= 0) {
                 $this->killProcess($process, $pipes);
@@ -165,16 +171,16 @@ final class TerminalTool implements InternalTool
             $write = null;
             $except = null;
             $ready = @stream_select($read, $write, $except, 0, 200_000);
-            if ($ready === false) {
+            if (false === $ready) {
                 break; // select error — treat like EOF
             }
-            if ($ready === 0) {
+            if (0 === $ready) {
                 continue; // nothing ready yet; loop re-checks the deadline
             }
 
             foreach ($read as $pipe) {
                 $chunk = fread($pipe, 8192);
-                if ($chunk === false || $chunk === '') {
+                if (false === $chunk || '' === $chunk) {
                     // EOF (or error) — drop this pipe from the watch set.
                     $open = array_values(array_filter($open, static fn ($p) => $p !== $pipe));
                     continue;
@@ -208,8 +214,8 @@ final class TerminalTool implements InternalTool
         }
 
         $output = $stdout;
-        if ($stderr !== '') {
-            $output .= ($output !== '' ? "\n" : '') . '[stderr] ' . $stderr;
+        if ('' !== $stderr) {
+            $output .= ('' !== $output ? "\n" : '').'[stderr] '.$stderr;
         }
         if ($capped) {
             // Output budget exhausted — the command was killed mid-flight.
@@ -217,13 +223,13 @@ final class TerminalTool implements InternalTool
             // output is usable up to the cap) with the truncation marker.
             return [
                 'ok' => true,
-                'output' => substr($output, 0, $this->maxOutputBytes) . "\n…[output truncated at " . $this->maxOutputBytes . ' bytes]',
+                'output' => substr($output, 0, $this->maxOutputBytes)."\n…[output truncated at ".$this->maxOutputBytes.' bytes]',
                 'exit_code' => -1,
                 'truncated' => true,
             ];
         }
 
-        if ($exitCode !== 0) {
+        if (0 !== $exitCode) {
             return [
                 'ok' => false,
                 'error' => sprintf('terminal: command exited with code %d', $exitCode),
@@ -242,14 +248,14 @@ final class TerminalTool implements InternalTool
     /**
      * Kill the process and close any still-open pipes.
      *
-     * @param resource                $process
-     * @param array<int, resource>    $pipes
+     * @param resource             $process
+     * @param array<int, resource> $pipes
      */
     private function killProcess($process, array $pipes): void
     {
         @proc_terminate($process, 9);
         foreach ($pipes as $index => $pipe) {
-            if ($index !== 0 && is_resource($pipe)) {
+            if (0 !== $index && is_resource($pipe)) {
                 @fclose($pipe);
             }
         }
@@ -262,8 +268,8 @@ final class TerminalTool implements InternalTool
     private function timeoutResult(string $stdout, string $stderr): array
     {
         $output = $stdout;
-        if ($stderr !== '') {
-            $output .= ($output !== '' ? "\n" : '') . '[stderr] ' . $stderr;
+        if ('' !== $stderr) {
+            $output .= ('' !== $output ? "\n" : '').'[stderr] '.$stderr;
         }
 
         return [

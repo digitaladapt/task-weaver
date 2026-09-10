@@ -5,18 +5,31 @@ declare(strict_types=1);
 namespace TaskWeaverWorker\Command;
 
 use function count;
+
+use DateTimeImmutable;
+
 use function in_array;
 use function is_array;
 use function is_string;
 
+use const JSON_INVALID_UTF8_SUBSTITUTE;
+use const JSON_PRETTY_PRINT;
+use const JSON_THROW_ON_ERROR;
+use const JSON_UNESCAPED_SLASHES;
+
+use JsonException;
 use RuntimeException;
+
+use function sprintf;
+use function strlen;
+
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use TaskWeaverWorker\ControllerClient;
 use TaskWeaverWorker\ContextBudget;
+use TaskWeaverWorker\ControllerClient;
 use TaskWeaverWorker\HttpException;
 use TaskWeaverWorker\LlmClient;
 use TaskWeaverWorker\Tool\InternalToolRegistry;
@@ -42,7 +55,7 @@ final class RunCommand extends Command
     private const int MAX_LLM_ROUNDS = 50;
 
     /** Per-result token cap for tool results fed back to the model. */
-    private const TOOL_RESULT_TOKEN_CAP = 1500;
+    private const int TOOL_RESULT_TOKEN_CAP = 1500;
 
     protected function configure(): void
     {
@@ -139,7 +152,7 @@ final class RunCommand extends Command
         // System prompt: static image default, overrideable by the
         // controller-issued config (WORKER.md §6 → Prompt assembly).
         $systemPromptOverride = is_string($config['system_prompt_override'] ?? null) ? $config['system_prompt_override'] : '';
-        if ($systemPromptOverride !== '') {
+        if ('' !== $systemPromptOverride) {
             $output->writeln('Using controller-issued system prompt override');
         }
 
@@ -156,7 +169,7 @@ final class RunCommand extends Command
         }
         $output->writeln(sprintf('Internal tools (sanctioned): %s', implode(', ', $internalTools->names()) ?: '(none)'));
 
-        do {
+        while (true) {
             try {
                 $claimed = $client->claim();
             } catch (HttpException $e) {
@@ -168,7 +181,7 @@ final class RunCommand extends Command
             $task = $claimed['task'] ?? null;
             $step = $claimed['step'] ?? null;
 
-            if ($task === null || $step === null) {
+            if (null === $task || null === $step) {
                 $output->writeln('No task available; sleeping...');
                 if ($once) {
                     return Command::SUCCESS;
@@ -193,7 +206,7 @@ final class RunCommand extends Command
                 } else {
                     $output->writeln(sprintf('<error>Step %s failed: %s</error>', $stepId, $e->getMessage()));
                 }
-            } catch (RuntimeException $e) {
+            } catch (RuntimeException|JsonException $e) {
                 // LLM unrecoverable / max rounds exceeded: report the
                 // failure so the shape resolves now instead of waiting for
                 // the lazy expiry deadline.
@@ -208,7 +221,7 @@ final class RunCommand extends Command
             if ($once) {
                 return Command::SUCCESS;
             }
-        } while (true);
+        }
     }
 
     private function runStep(
@@ -226,7 +239,7 @@ final class RunCommand extends Command
         $taskData = $client->fetchTask($taskId);
         $stepData = $this->findStep($taskData, $stepId);
 
-        if ($stepData === null) {
+        if (null === $stepData) {
             throw new HttpException('Step not in task data', 0);
         }
 
@@ -249,17 +262,17 @@ final class RunCommand extends Command
         $isFinal = (bool) ($stepData['is_final'] ?? false);
 
         // System prompt: override if issued, else the image default.
-        $system = $systemPromptOverride !== ''
+        $system = '' !== $systemPromptOverride
             ? $systemPromptOverride
             : $this->systemPrompt($stepName, $stepTags, $isFinal);
 
         // Final step: consume the tool-call-results envelope of all prior
         // steps (SPEC.md → Final-Step Input). Non-final steps don't see it.
-        $userContent = $this->grounding() . "\n\n" . $stepDescription;
+        $userContent = $this->grounding()."\n\n".$stepDescription;
         if ($isFinal) {
             $envelope = $this->buildEnvelope($taskData);
-            if ($envelope !== null) {
-                $userContent .= "\n\n## Prior step results\n\nThe following tool calls were executed for the earlier steps of this task. Consume their results as if you had issued them yourself:\n\n" . $envelope;
+            if (null !== $envelope) {
+                $userContent .= "\n\n## Prior step results\n\nThe following tool calls were executed for the earlier steps of this task. Consume their results as if you had issued them yourself:\n\n".$envelope;
             }
         }
 
@@ -292,9 +305,9 @@ final class RunCommand extends Command
             ];
 
             $toolCalls = $response['tool_calls'];
-            if ($toolCalls === []) {
+            if ([] === $toolCalls) {
                 // No more tool calls — the step is done.
-                if ($response['content'] !== '') {
+                if ('' !== $response['content']) {
                     $result = ['summary' => $response['content']];
                 }
                 break;
@@ -311,7 +324,7 @@ final class RunCommand extends Command
                 // --- Robust tool-call handling: invalid calls get an error
                 // result fed back so the model can correct itself. Never
                 // crash the loop on a malformed call.
-                if ($toolName === '') {
+                if ('' === $toolName) {
                     $messages[] = $this->toolResultMessage($callId, ['ok' => false, 'error' => 'Malformed tool call: missing tool name']);
                     continue;
                 }
@@ -421,6 +434,8 @@ final class RunCommand extends Command
      * @param array<string, mixed> $result
      *
      * @return array{role: string, tool_call_id: string, content: string}
+     *
+     * @throws JsonException
      */
     private function toolResultMessage(string $callId, array $result): array
     {
@@ -447,29 +462,29 @@ final class RunCommand extends Command
             if (!is_array($step) || ($step['is_final'] ?? false)) {
                 continue;
             }
-            $i++;
-            $name = (string) ($step['name'] ?? ('step ' . $i));
+            ++$i;
+            $name = (string) ($step['name'] ?? ('step '.$i));
             $status = (string) ($step['status'] ?? '');
             $stepResult = $step['result'] ?? null;
 
-            if ($status === 'completed' && $stepResult !== null) {
+            if ('completed' === $status && null !== $stepResult) {
                 $entries[] = [
-                    'tool_name' => 'step/' . $i,
+                    'tool_name' => 'step/'.$i,
                     'arguments' => ['step' => $i, 'name' => $name],
                     'result' => $stepResult,
                     'status' => 'completed',
                 ];
             } else {
                 $entries[] = [
-                    'tool_name' => 'step/' . $i,
+                    'tool_name' => 'step/'.$i,
                     'arguments' => ['step' => $i, 'name' => $name],
-                    'error' => sprintf('step "%s" did not complete (status: %s)', $name, $status !== '' ? $status : 'unknown'),
+                    'error' => sprintf('step "%s" did not complete (status: %s)', $name, '' !== $status ? $status : 'unknown'),
                     'status' => 'failed',
                 ];
             }
         }
 
-        if ($entries === []) {
+        if ([] === $entries) {
             return null;
         }
 
@@ -494,10 +509,10 @@ final class RunCommand extends Command
 
     private function grounding(): string
     {
-        $now = new \DateTimeImmutable();
+        $now = new DateTimeImmutable();
 
         return sprintf(
-            "Current date/time: %s (UTC). Timezone: %s",
+            'Current date/time: %s (UTC). Timezone: %s',
             $now->format('Y-m-d H:i:s'),
             $now->getTimezone()->getName(),
         );
@@ -510,9 +525,9 @@ final class RunCommand extends Command
             : '';
 
         return sprintf(
-            "You are a TaskWeaver worker. You are running step \"%s\" (tags: %s).%s\n" .
-            "You may call the tools provided below. They are executed by the controller on your behalf.\n" .
-            "Raw tool data may be noisy; interpret it and answer only what the step asked for.",
+            "You are a TaskWeaver worker. You are running step \"%s\" (tags: %s).%s\n".
+            "You may call the tools provided below. They are executed by the controller on your behalf.\n".
+            'Raw tool data may be noisy; interpret it and answer only what the step asked for.',
             $stepName,
             implode(', ', $stepTags),
             $finalNote,

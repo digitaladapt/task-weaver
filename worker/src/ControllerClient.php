@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker;
 
+use function is_array;
+use function sprintf;
+
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
+use Throwable;
 
 /**
  * Thin HTTP client for the TaskWeaver controller's worker API (Tier-1/2).
@@ -32,7 +36,7 @@ final class ControllerClient
     public function provision(string $name, array $descriptor = []): array
     {
         $response = $this->request('POST', '/api/worker/provision', [
-            'headers' => ['Authorization' => 'Bearer ' . $this->enrollmentToken],
+            'headers' => ['Authorization' => 'Bearer '.$this->enrollmentToken],
             'json' => ['name' => $name, 'descriptor' => $descriptor],
         ]);
 
@@ -63,7 +67,7 @@ final class ControllerClient
      */
     public function fetchTask(string $taskId): array
     {
-        return $this->request('GET', '/api/worker/task/' . urlencode($taskId));
+        return $this->request('GET', '/api/worker/task/'.urlencode($taskId));
     }
 
     /**
@@ -86,7 +90,7 @@ final class ControllerClient
     public function callTool(string $taskId, string $eventId, string $eventKey, string $tool, array $args, ?string $idempotencyKey): array
     {
         $body = ['tool' => $tool, 'args' => $args];
-        if ($idempotencyKey !== null) {
+        if (null !== $idempotencyKey) {
             $body['idempotency_key'] = $idempotencyKey;
         }
 
@@ -151,32 +155,29 @@ final class ControllerClient
      * @return array<string, mixed>
      *
      * @throws HttpException on non-2xx, with the status code so the caller can
-     *                       implement the abandon-on-denial rule.
+     *                       implement the abandon-on-denial rule
      */
     private function request(string $method, string $path, array $options = []): array
     {
-        if ($this->workerKey !== null) {
+        if (null !== $this->workerKey) {
             $options['headers'] ??= [];
-            $options['headers']['Authorization'] = 'Bearer ' . $this->workerKey;
+            $options['headers']['Authorization'] = 'Bearer '.$this->workerKey;
         }
 
-        $url = rtrim($this->baseUrl, '/') . $path;
+        $url = rtrim($this->baseUrl, '/').$path;
 
         try {
             $response = $this->http->request($method, $url, $options);
             $status = $response->getStatusCode();
             $content = $response->getContent(false);
-        } catch (\Throwable $e) {
-            throw new HttpException('Transport error: ' . $e->getMessage(), 0);
+        } catch (Throwable $e) {
+            throw new HttpException('Transport error: '.$e->getMessage(), 0);
         }
 
         $decoded = json_decode($content, true);
 
         if ($status < 200 || $status >= 300) {
-            throw new HttpException(
-                is_array($decoded) ? ($decoded['error'] ?? "HTTP {$status}") : "HTTP {$status}",
-                $status,
-            );
+            throw new HttpException(is_array($decoded) ? ($decoded['error'] ?? "HTTP {$status}") : "HTTP {$status}", $status);
         }
 
         if (!is_array($decoded)) {

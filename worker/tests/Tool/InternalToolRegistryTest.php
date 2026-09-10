@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TaskWeaverWorker\Tests\Tool;
 
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use TaskWeaverWorker\Tool\InternalToolRegistry;
 use TaskWeaverWorker\Tool\TerminalTool;
 
@@ -23,7 +24,7 @@ final class InternalToolRegistryTest extends TestCase
     {
         $registry = new InternalToolRegistry([]);
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(RuntimeException::class);
         $registry->get('nope');
     }
 

@@ -6,6 +6,9 @@ namespace TaskWeaverWorker\Tests\Tool;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+
+use function strlen;
+
 use TaskWeaverWorker\Tool\TerminalTool;
 
 /**

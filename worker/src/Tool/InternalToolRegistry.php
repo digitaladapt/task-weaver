@@ -6,6 +6,8 @@ namespace TaskWeaverWorker\Tool;
 
 use RuntimeException;
 
+use function sprintf;
+
 /**
  * Registry of the internal (sandbox-local) tools this worker ships.
  *

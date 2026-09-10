@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker\Tests;
 
+use function count;
+
 use PHPUnit\Framework\TestCase;
+
+use function strlen;
+
 use TaskWeaverWorker\ContextBudget;
 
 final class ContextBudgetTest extends TestCase

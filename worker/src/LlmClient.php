@@ -4,9 +4,16 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker;
 
+use function is_array;
+use function is_string;
+
 use RuntimeException;
+
+use function sprintf;
+
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
+use Throwable;
 
 /**
  * Minimal OpenAI-compatible chat client for the worker's LLM channel.
@@ -61,7 +68,7 @@ final class LlmClient
 
     /**
      * @param array<int, array{role: string, content: string, tool_call_id?: string, tool_calls?: array<int, mixed>}> $messages
-     * @param array<int, array{name: string, description?: ?string, schema: array<string, mixed>}> $tools
+     * @param array<int, array{name: string, description?: ?string, schema: array<string, mixed>}>                    $tools
      *
      * @return array{content: string, tool_calls: array<int, mixed>, usage?: array<string, int>}
      */
@@ -75,7 +82,7 @@ final class LlmClient
             'max_tokens' => $this->maxTokens,
         ];
 
-        if ($tools !== []) {
+        if ([] !== $tools) {
             // OpenAI-compatible tool calling format.
             $payload['tools'] = array_map(static function (array $tool): array {
                 return [
@@ -106,16 +113,12 @@ final class LlmClient
         $backoffMs = $this->backoffBaseMs;
 
         while (true) {
-            $attempt++;
+            ++$attempt;
             try {
                 return $this->postOnce($payload);
             } catch (LlmTransientException $e) {
                 if ($attempt >= $maxAttempts) {
-                    throw new RuntimeException(sprintf(
-                        'LLM call failed after %d attempts: %s',
-                        $attempt,
-                        $e->getMessage(),
-                    ), 0, $e);
+                    throw new RuntimeException(sprintf('LLM call failed after %d attempts: %s', $attempt, $e->getMessage()), 0, $e);
                 }
                 usleep($backoffMs * 1000 + random_int(0, $backoffMs));
                 $backoffMs = min($backoffMs * 2, 10_000);
@@ -134,11 +137,11 @@ final class LlmClient
     private function postOnce(array $payload): array
     {
         $headers = ['Content-Type' => 'application/json'];
-        if ($this->bearerToken !== null && $this->bearerToken !== '') {
+        if (null !== $this->bearerToken && '' !== $this->bearerToken) {
             // Proxied channel: the worker key authenticates to the
             // controller's /api/worker/llm route (Tier-1), never to a
             // provider directly.
-            $headers['Authorization'] = 'Bearer ' . $this->bearerToken;
+            $headers['Authorization'] = 'Bearer '.$this->bearerToken;
         }
 
         try {
@@ -149,19 +152,19 @@ final class LlmClient
             ]);
             $status = $response->getStatusCode();
             $content = $response->getcontent(false);
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             // Transport error (network down, DNS, TLS) — retryable.
-            throw new LlmTransientException('Transport error: ' . $e->getMessage());
+            throw new LlmTransientException('Transport error: '.$e->getMessage());
         }
 
-        if ($status === 429 || $status >= 500) {
+        if (429 === $status || $status >= 500) {
             // Rate limited / upstream trouble — retryable.
             throw new LlmTransientException(sprintf('LLM error %d: %s', $status, substr($content, 0, 300)));
         }
 
         if ($status >= 400) {
             // Permanent client error — do not retry.
-            throw new RuntimeException("LLM error {$status}: " . substr($content, 0, 500));
+            throw new RuntimeException("LLM error {$status}: ".substr($content, 0, 500));
         }
 
         $data = json_decode($content, true);
@@ -183,6 +186,6 @@ final class LlmClient
 
     private function endpoint(): string
     {
-        return rtrim($this->baseUrl, '/') . '/chat/completions';
+        return rtrim($this->baseUrl, '/').'/chat/completions';
     }
 }

@@ -4,6 +4,15 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker;
 
+use function array_slice;
+use function count;
+use function is_array;
+use function is_string;
+
+use const JSON_INVALID_UTF8_SUBSTITUTE;
+
+use function strlen;
+
 /**
  * Context budget manager (WORKER.md §6 → Context budget).
  *
@@ -118,7 +127,7 @@ final class ContextBudget
     {
         foreach ($data as $key => $value) {
             if (is_string($value) && strlen($value) > $maxCharsPerValue) {
-                $data[$key] = substr($value, 0, $maxCharsPerValue) . '…[truncated]';
+                $data[$key] = substr($value, 0, $maxCharsPerValue).'…[truncated]';
             } elseif (is_array($value)) {
                 $data[$key] = $this->truncateStrings($value, $maxCharsPerValue);
             }
@@ -177,7 +186,7 @@ final class ContextBudget
             $running += $cost;
         }
 
-        for ($i = count($mid) - 1; $i >= 0; $i--) {
+        for ($i = count($mid) - 1; $i >= 0; --$i) {
             $cost = $this->estimateMessageTokens($mid[$i]);
             if ($running + $cost <= $budget) {
                 array_unshift($kept, $mid[$i]);
@@ -191,7 +200,7 @@ final class ContextBudget
 
         // Orphan guard: if the oldest kept message is a tool result whose
         // assistant tool_calls message was dropped, drop it too.
-        while ($kept !== [] && ($kept[0]['role'] ?? '') === 'tool') {
+        while ([] !== $kept && ($kept[0]['role'] ?? '') === 'tool') {
             array_shift($kept);
         }
 
