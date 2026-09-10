@@ -315,7 +315,11 @@ task-loop, not its code:
 - a deliberately small prompt (system + grounding + step instruction +
   toolbox);
 - static context windowing (head + capped tool output + last N exchanges);
-- LLM via an OpenAI-compatible HTTP endpoint on the private network;
+- LLM via an OpenAI-compatible HTTP endpoint on the private network
+  (**streaming by default** — SSE deltas assembled in `LlmClient` into the
+  standard `{content, tool_calls, usage}` shape, tool-call arguments
+  concatenated across `delta.tool_calls[index]` frames; `TASKWEAVER_LLM_STREAM=0`
+  opts out per worker);
 - LLM-call concurrency limiting with interleaving at tool I/O.
 
 ### Prompt assembly — static base, live grounding
@@ -679,7 +683,7 @@ deadline.
 | 7 | Internal-tool gating | Open set — step `tags` gate external ToolDefs only (matches controller). |
 | 8 | Event-key TTL | Revoke on `complete` **and** dead at `step.expires_at`. (No separate sliding TTL in v1.) |
 | 9 | `/tool` idempotency | `idempotency_key` per tool call; TaskWeaver dedupes keyed by event. |
-| 10 | Tool-call execution | **Sync-only** in v1; async/streaming tool results deferred. |
+| 10 | Tool-call execution | **Sync-only** in v1; async/streaming tool results deferred. **LLM responses stream** (SSE) end-to-end — the provider-to-worker path (and the controller proxy relay) is streamed; tool *execution* remains sync. |
 | 11 | Fetch | Proxied `fetch` tool through TaskWeaver; every call audited with URL + hash. |
 | 12 | Grounding/system-prompt provenance | System prompt from image default (+ controller override); grounding generated live per step. |
 | 13 | Worker on denial | **Abandon the step immediately** on any 401/403 (tool call, status, or `complete`) — no retry, no LLM loop, no result report; drop local state and move to the next claim. Denial = the step's fate is already decided server-side. |
@@ -694,7 +698,7 @@ deadline.
   (`dev/mock-llm.php`); pointing it at a real OpenAI-compatible endpoint
   (Ollama/vLLM) needs on-hardware verification.
 - **async/streaming tools** — revisit when a long-running tool (e.g. a long
-  build) needs it.
+  build) needs it. (Streaming *LLM responses* is done — see STREAMING.md.)
 - **Sliding event-key TTL** — cheap to add if we ever want belt-and-suspenders
   beyond the hard deadline.
 - **One-container-per-task-run** — stricter isolation, slower start; keep in

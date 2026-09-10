@@ -100,8 +100,8 @@ The worker's LLM channel is **controller-directed** — the worker never decides
 
 **Proxy mechanics (v1):**
 
-- `POST /api/worker/llm` — body is the OpenAI-compatible chat/completions payload; `Authorization: Bearer <worker_key>`. TaskWeaver validates the key, then forwards to `TASKWEAVER_LLM_URL/chat/completions` with the provider key attached (`Authorization: Bearer <TASKWEAVER_LLM_API_KEY>` for OpenAI-style, or the provider's expected header) and relays the JSON response.
-- **Non-streaming only in v1.** Streaming (SSE) is a v2 follow-up; the worker's `LlmClient` already posts non-streaming payloads, so v1 is a straight JSON relay.
+- `POST /api/worker/llm` — body is the OpenAI-compatible chat/completions payload; `Authorization: Bearer <worker_key>`. TaskWeaver validates the key, then forwards to `TASKWEAVER_LLM_URL/chat/completions` with the provider key attached (`Authorization: Bearer <TASKWEAVER_LLM_API_KEY>` for OpenAI-style, or the provider's expected header) and relays the response back.
+- **Streaming by default (SSE).** The worker sends `stream: true`; TaskWeaver relays the upstream SSE frames **verbatim** (`text/event-stream`), so the worker assembles content + tool-call deltas exactly as it would from the provider. Non-streaming payloads keep the buffered JSON relay (backwards compatible).
 - **Request/response scrubbing** applies to the LLM proxy too: provider keys and any echoed auth material are stripped from logged traces (same rule as MCP proxy, §Tool Calls — Scrubbing).
 - **Event/worker key expiry** applies: the same `401/403 → abandon-on-denial` rule that governs tool calls covers the LLM proxy route automatically.
 - **No circular dependency:** the LLM proxy is orthogonal to step execution. The controller can proxy for a worker even while its step is mid-flight; both channels are authenticated by the same worker/event key.
@@ -524,12 +524,12 @@ The step editor enforces the two valid shapes (single step, or all-parallel + on
 | 14 | Config source | **Environment variables** everywhere. `symfony/dotenv` is a **dev-only dependency**; production uses real env vars. |
 | 15 | Stale step expiry | **Lazy (option 1):** `Step.expires_at = now + step-timeout` at running; the selection query handles expiry (`queued OR running AND expires_at < now`); event keys gated by the same deadline. Periodic sweeper (option 2) deferred to next version. |
 | 16 | Worker on denial | A worker that gets a **401/403** on this step (tool call, status, or `complete`) **abandons the step immediately** — no retry, no LLM loop, no result report; it drops local state and moves to the next claim. Denial = the step's fate is already decided server-side. |
-| 17 | LLM auth / external LLMs | **Controller-mediated proxy.** When a provider key is configured, the worker's LLM traffic is proxied through TaskWeaver's `/api/worker/llm`; the worker never holds the key and never needs egress. Unauthenticated local LLMs stay direct. v1 is non-streaming (SSE in v2). |
+| 17 | LLM auth / external LLMs | **Controller-mediated proxy.** When a provider key is configured, the worker's LLM traffic is proxied through TaskWeaver's `/api/worker/llm`; the worker never holds the key and never needs egress. Unauthenticated local LLMs stay direct. v1 streams by default (SSE relay; non-streaming JSON relay kept for legacy callers). |
 | 18 | LLM model selection | v1 = **one controller-wide provider/model**. Named **model types** (`fast`/`coder`/`abliterated`/…) selectable at task/step level is a **v2** direction (see § LLM channel). |
 
 ## v2 Roadmap (intent, not scope)
 
 - **LLM model types** — named types (`fast`, `coder`, `abliterated`, …) → concrete provider/model/params; selectable at task and step level; resolved server-side. Deferred so v1 stays a single, clean provider channel.
-- **Streaming LLM proxy** (SSE) through `/api/worker/llm`.
+- **Streaming LLM proxy** (SSE) through `/api/worker/llm` — **implemented**; the proxy is a verbatim SSE relay and the worker assembles deltas into the standard chat shape.
 - DB-backed credential storage replacing v1's env-var-only approach.
 - Periodic stale-step sweeper (vs. v1's lazy expiry).

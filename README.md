@@ -4,8 +4,9 @@ PHP-based LLM task manager, scheduler, and **controller** — the planned
 replacement for Open WebUI for task-orchestration use cases. Workers are fully
 sandboxed; TaskWeaver owns all credentials and proxies every external tool call.
 
-See [`SPEC.md`](SPEC.md) for the full design and [`WORKER.md`](WORKER.md) for
-the worker-facing contract.
+See [`SPEC.md`](SPEC.md) for the full design, [`WORKER.md`](WORKER.md) for
+the worker-facing contract, and [`STREAMING.md`](STREAMING.md) for the
+streaming (SSE) implementation plan/notes.
 
 ## Stack
 
