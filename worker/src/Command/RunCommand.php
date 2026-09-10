@@ -68,7 +68,8 @@ final class RunCommand extends Command
             ->addOption('llm-url', null, InputOption::VALUE_REQUIRED, 'Local LLM base URL')
             ->addOption('llm-model', null, InputOption::VALUE_REQUIRED, 'Local LLM model')
             ->addOption('once', null, InputOption::VALUE_NONE, 'Claim and run one task, then exit')
-            ->addOption('max-rounds', null, InputOption::VALUE_REQUIRED, 'Max LLM rounds per step');
+            ->addOption('max-rounds', null, InputOption::VALUE_REQUIRED, 'Max LLM rounds per step')
+            ->addOption('llm-stream', null, InputOption::VALUE_REQUIRED, 'Enable SSE streaming from the LLM (1/0)');
     }
 
     /* order of resolution:
@@ -150,7 +151,12 @@ final class RunCommand extends Command
         // Context budget from the controller-issued config.
         $budget = ContextBudget::fromConfig($config);
         $llm->setContextBudget($budget->maxTokens(), $budget->requestSize() + $budget->maxTokens());
-        $output->writeln(sprintf('LLM endpoint: %s (model: %s, auth: %s)', $llmUrl, $llmModel, $llmAuth));
+
+        // Streaming: on by default; operators can disable per-worker via
+        // --llm-stream 0 or TASKWEAVER_LLM_STREAM=0 (provider that chokes
+        // on SSE).
+        $llmStream = '1' === $this->resolveVar($input, 'llm-stream', 'TASKWEAVER_LLM_STREAM', '1');
+        $output->writeln(sprintf('LLM endpoint: %s (model: %s, auth: %s, stream: %s)', $llmUrl, $llmModel, $llmAuth, $llmStream ? 'on' : 'off'));
         $output->writeln(sprintf('Context budget: %d request + %d output tokens', $budget->requestSize(), $budget->maxTokens()));
 
         // System prompt: static image default, overrideable by the
@@ -201,7 +207,7 @@ final class RunCommand extends Command
             $output->writeln(sprintf('Claimed task %s step %s', $taskId, $stepId));
 
             try {
-                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $maxRounds, $output);
+                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $maxRounds, $llmStream, $output);
             } catch (HttpException $e) {
                 if ($e->isDenial()) {
                     // Abandon-on-denial: the step's fate is already decided
@@ -237,6 +243,7 @@ final class RunCommand extends Command
         string $taskId,
         string $stepId,
         int $maxRounds,
+        bool $llmStream,
         OutputInterface $output,
     ): void {
         // Fetch task + schema, then mark running.
@@ -301,6 +308,16 @@ final class RunCommand extends Command
             $response = $llm->chat(
                 $budget->pruneHistory($messages, $this->toolSchemaTokens($tools)),
                 $tools,
+                [
+                    'stream' => $llmStream,
+                    // Progress hook: only live when the operator asks for it
+                    // (-v / -vv); zero cost otherwise.
+                    'on_chunk' => static function (int $chars) use ($output, $round): void {
+                        if ($output->isVerbose()) {
+                            $output->writeln(sprintf('  streamed %d chars (round %d)', $chars, $round));
+                        }
+                    },
+                ],
             );
             $messages[] = [
                 'role' => 'assistant',

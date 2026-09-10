@@ -19,6 +19,11 @@ declare(strict_types=1);
  *   { "status": 500 } | { "status": 429 }
  *     → respond with that HTTP status (worker should retry)
  *
+ *   { "stream": true }   (optional, per entry)
+ *     → stream the entry's response as OpenAI-style SSE frames when the
+ *       worker requested stream:true; if the worker didn't request
+ *       streaming, the same entry is emitted as a plain JSON response.
+ *
  * Script file path comes from MOCK_LLM_SCRIPT env var, or defaults to
  * dev/mock-llm-script.json. The script auto-repeats its last entry when
  * exhausted (so long loops can be simulated); POST /__reset restarts the
@@ -35,6 +40,29 @@ function respond(int $status, array $body): never
     http_response_code($status);
     header('Content-Type: application/json');
     echo json_encode($body, JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+/**
+ * Emit one SSE data frame.
+ */
+function sse_data(string $json): void
+{
+    echo 'data: ' . $json . "\n\n";
+    if (function_exists('flush')) {
+        flush();
+    }
+}
+
+/**
+ * Emit the terminal [DONE] frame and end the response.
+ */
+function sse_done(): never
+{
+    echo 'data: [DONE]' . "\n\n";
+    if (function_exists('flush')) {
+        flush();
+    }
     exit;
 }
 
@@ -87,12 +115,22 @@ if (!empty($entry['echo_user'])) {
             $lastUser = (string) ($m['content'] ?? '');
         }
     }
-    respond(200, ['id' => 'chatcmpl-mock-echo', 'object' => 'chat.completion', 'created' => time(), 'model' => $body['model'] ?? 'mock-model', 'choices' => [['index' => 0, 'message' => ['content' => $lastUser], 'finish_reason' => 'stop']], 'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120]]);
+    $echoBody = ['id' => 'chatcmpl-mock-echo', 'object' => 'chat.completion', 'created' => time(), 'model' => $body['model'] ?? 'mock-model', 'choices' => [['index' => 0, 'message' => ['content' => $lastUser], 'finish_reason' => 'stop']], 'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120]];
+    if (($body['stream'] ?? false) === true) {
+        stream_content($lastUser, $echoBody, $body);
+    }
+    respond(200, $echoBody);
 }
 
 $toolCalls = $entry['tool_calls'] ?? [];
 $content = $entry['content'] ?? '';
+$userStream = ($body['stream'] ?? false) === true;
 
+if ($userStream) {
+    stream_entry($content, $toolCalls, $body);
+}
+
+// Non-streaming: standard JSON response.
 $message = [];
 if (is_string($content) && $content !== '') {
     $message['content'] = $content;
@@ -119,3 +157,141 @@ respond(200, [
         'total_tokens' => 120,
     ],
 ]);
+
+/**
+ * Stream a content entry as SSE deltas (chunked to exercise incremental
+ * assembly) then a usage frame and [DONE].
+ *
+ * @param array<string, mixed> $fullBody full non-stream body shape (for id/model)
+ * @param array<string, mixed> $request  the worker's chat payload
+ */
+function stream_content(string $content, array $fullBody, array $request): never
+{
+    http_response_code(200);
+    header('Content-Type: text/event-stream');
+    header('Cache-Control: no-cache');
+    header('X-Accel-Buffering: no');
+
+    $model = $request['model'] ?? 'mock-model';
+    $id = $fullBody['id'] ?? ('chatcmpl-mock-' . time());
+    $created = $fullBody['created'] ?? time();
+
+    // Split content into a few pieces so the worker exercises delta assembly.
+    $pieces = chunk_text($content, 5);
+    foreach ($pieces as $piece) {
+        sse_data((string) json_encode([
+            'id' => $id,
+            'object' => 'chat.completion.chunk',
+            'created' => $created,
+            'model' => $model,
+            'choices' => [['index' => 0, 'delta' => ['content' => $piece], 'finish_reason' => null]],
+        ]));
+    }
+
+    sse_data((string) json_encode([
+        'id' => $id,
+        'object' => 'chat.completion.chunk',
+        'created' => $created,
+        'model' => $model,
+        'choices' => [['index' => 0, 'delta' => [], 'finish_reason' => 'stop']],
+        'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120],
+    ]));
+
+    sse_done();
+}
+
+/**
+ * Stream a tool-calls entry as SSE deltas (arguments delivered in multiple
+ * chunks to exercise index-preserving merge), then [DONE].
+ *
+ * @param array<int, array<string, mixed>> $toolCalls
+ * @param array<string, mixed>             $request the worker's chat payload
+ */
+function stream_entry(string $content, array $toolCalls, array $request): never
+{
+    http_response_code(200);
+    header('Content-Type: text/event-stream');
+    header('Cache-Control: no-cache');
+    header('X-Accel-Buffering: no');
+
+    $model = $request['model'] ?? 'mock-model';
+    $id = 'chatcmpl-mock-' . time();
+    $created = time();
+
+    if ($toolCalls === []) {
+        stream_content($content, ['id' => $id, 'created' => $created], $request);
+    }
+
+    foreach ($toolCalls as $index => $call) {
+        $fn = $call['function'] ?? [];
+        $name = (string) ($fn['name'] ?? '');
+        $arguments = (string) ($fn['arguments'] ?? '{}');
+
+        // First frame: identity (id/type/name) + empty arguments.
+        sse_data((string) json_encode([
+            'id' => $id,
+            'object' => 'chat.completion.chunk',
+            'created' => $created,
+            'model' => $model,
+            'choices' => [[
+                'index' => 0,
+                'delta' => [
+                    'tool_calls' => [[
+                        'index' => $index,
+                        'id' => $call['id'] ?? ('call_' . $index),
+                        'type' => 'function',
+                        'function' => ['name' => $name, 'arguments' => ''],
+                    ]],
+                ],
+                'finish_reason' => null,
+            ]],
+        ]));
+
+        // Then the arguments split across chunks (exercise concatenation).
+        $pieces = chunk_text($arguments, 4);
+        foreach ($pieces as $piece) {
+            sse_data((string) json_encode([
+                'id' => $id,
+                'object' => 'chat.completion.chunk',
+                'created' => $created,
+                'model' => $model,
+                'choices' => [[
+                    'index' => 0,
+                    'delta' => [
+                        'tool_calls' => [[
+                            'index' => $index,
+                            'function' => ['arguments' => $piece],
+                        ]],
+                    ],
+                    'finish_reason' => null,
+                ]],
+            ]));
+        }
+    }
+
+    // Final frame: finish_reason tool_calls + usage, then DONE.
+    sse_data((string) json_encode([
+        'id' => $id,
+        'object' => 'chat.completion.chunk',
+        'created' => $created,
+        'model' => $model,
+        'choices' => [['index' => 0, 'delta' => [], 'finish_reason' => 'tool_calls']],
+        'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120],
+    ]));
+
+    sse_done();
+}
+
+/**
+ * Split text into roughly equal pieces (min 1 char). Empty string → [""].
+ *
+ * @return string[]
+ */
+function chunk_text(string $text, int $chunkSize): array
+{
+    if ('' === $text) {
+        return [''];
+    }
+
+    return str_split($text, max(1, $chunkSize));
+}
