@@ -4,7 +4,7 @@
 
 {% block body %}
     <div class="page-head">
-        <a href="{{ path('app_tasks') }}">← All tasks</a>
+        <a href="{{ path('app_tasks') }}" class="btn btn-ghost">All tasks</a>
         <span class="spacer"></span>
         {% if task.status != 'running' %}
         <form method="post" action="{{ path('app_task_run', {id: task.id}) }}" class="inline">
@@ -60,12 +60,12 @@
         </div>
 
         <div class="panel">
-            <h3>Event timeline ({{ task.events|length }})</h3>
+            <h3>Recent events ({{ task.events|length }})</h3>
             {% if task.events is empty %}
                 <div class="empty">No events logged for this task yet.</div>
             {% else %}
             <ul class="timeline">
-                {% for event in task.events|sort((a, b) => a.timestamp <=> b.timestamp) %}
+                {% for event in task.events|sort((a, b) => b.timestamp <=> a.timestamp) %}
                     <li class="type-{{ event.type }}">
                         <span class="t">{{ event.timestamp|date('Y-m-d H:i:s') }}</span>
                         <span class="badge type-{{ event.type }}">{{ event.type }}</span>

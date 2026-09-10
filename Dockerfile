@@ -108,6 +108,12 @@ ENTRYPOINT ["controller-entrypoint"]
 # ── Stage: worker — sandboxed LLM agent loop ──────────────────────────────
 FROM base AS worker
 
+# dev staples for terminal
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git jq tar gzip unzip less python3-minimal \
+    iproute2 dnsutils bc xxd coreutils grep sed gawk bash-completion \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root worker user (uid/gid 1000). Runtime hardening — read-only root
 # fs, no capabilities, no-new-privs, private-only network — is enforced by
 # the deployment (compose / CI), not baked in.

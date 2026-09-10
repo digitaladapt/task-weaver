@@ -104,11 +104,6 @@
         </div>
     </form>
 
-    <div class="delete-zone" style="margin-top:8px; padding-top:20px; border-top:1px solid var(--border); text-align:center;">
-        <form method="post" action="{{ path('app_tool_server_delete', {id: server.id}) }}" class="inline" onsubmit="return confirm('Delete this MCP server and ALL its tool definitions?\\n\\nThis cannot be undone.');">
-            <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
-            <button type="submit" class="btn btn-danger">Delete Server</button>
-        </form>
     </div>
 {% endblock %}
 
