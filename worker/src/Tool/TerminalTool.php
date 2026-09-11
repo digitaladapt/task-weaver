@@ -86,6 +86,11 @@ final class TerminalTool implements InternalTool
         return 'terminal';
     }
 
+    public function tags(): array
+    {
+        return ['terminal'];
+    }
+
     public function schema(): array
     {
         return [

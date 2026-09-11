@@ -264,10 +264,12 @@ final class RunCommand extends Command
         $output->writeln(sprintf('Event %s registered', $eventId));
 
         // Build the step context: external tools come from the controller's
-        // tag-matched schemas; internal tools are this worker's own registry.
-        $tools = is_array($stepData['tools'] ?? null) ? $stepData['tools'] : [];
-        $tools = array_merge($tools, $internalTools->schemas());
+        // tag-matched schemas; internal tools are this worker's own registry,
+        // scoped to the step's tags as well (WORKER.md §4: a step sees only
+        // the tools its tags call for).
         $stepTags = is_array($stepData['tags'] ?? null) ? $stepData['tags'] : [];
+        $tools = is_array($stepData['tools'] ?? null) ? $stepData['tools'] : [];
+        $tools = array_merge($tools, $internalTools->schemasForStep($stepTags));
         $stepName = (string) ($stepData['name'] ?? 'step');
         $stepDescription = (string) ($stepData['description'] ?? '');
         $isFinal = (bool) ($stepData['is_final'] ?? false);
