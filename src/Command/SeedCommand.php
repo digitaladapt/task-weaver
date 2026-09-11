@@ -219,6 +219,8 @@ final class SeedCommand extends Command
 
         $e4 = $this->makeEvent($step2a, Event::TYPE_TOOL_FINISHED, $worker, [
             'tool' => 'weather.get',
+            'ok' => true,
+            'result' => $weatherResult,
             'duration_ms' => 412,
         ], $t3);
 
@@ -348,6 +350,9 @@ final class SeedCommand extends Command
 
         $this->makeEvent($step3, Event::TYPE_TOOL_FINISHED, $worker, [
             'tool' => 'status.get',
+            'ok' => false,
+            'result' => null,
+            'error' => 'upstream 503: status endpoint timed out',
             'status' => 'error',
             'duration_ms' => 3020,
         ], $u4);
