@@ -38,4 +38,23 @@ final class InternalToolRegistryTest extends TestCase
         self::assertIsArray($schemas[0]['schema']);
         self::assertArrayHasKey('properties', $schemas[0]['schema']);
     }
+
+    public function testSchemasForStepOnlyIncludesTagMatchedTools(): void
+    {
+        $registry = new InternalToolRegistry([new TerminalTool()]);
+
+        // Step tagged for the terminal capability → tool offered.
+        self::assertCount(1, $registry->schemasForStep(['terminal']));
+        self::assertSame('terminal', $registry->schemasForStep(['terminal'])[0]['name']);
+    }
+
+    public function testSchemasForStepOmitsToolsTheStepDidNotAskFor(): void
+    {
+        $registry = new InternalToolRegistry([new TerminalTool()]);
+
+        // Step only calls for external tools (weather, echo, …): the
+        // terminal internal tool must NOT be advertised.
+        self::assertSame([], $registry->schemasForStep(['weather']));
+        self::assertSame([], $registry->schemasForStep([]));
+    }
 }
