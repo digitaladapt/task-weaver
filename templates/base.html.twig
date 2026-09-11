@@ -170,6 +170,48 @@
         .msg.success { background: rgba(63,185,80,.12); border: 1px solid var(--green); color: var(--green); }
         .msg.error { background: rgba(248,81,73,.12); border: 1px solid var(--red); color: var(--red); }
 
+        /* Pretty-printed JSON: wrap instead of horizontal-scroll, cap height. */
+        .json-block {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        /* Rendered markdown sections beneath the JSON view. */
+        .payload-rendered { margin-top: 8px; }
+        .rendered-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+        .rendered-section {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 8px;
+            margin-top: 6px;
+            font-size: 13px;
+        }
+        .rendered-path { font-size: 11px; color: var(--accent); margin-bottom: 4px; }
+        .rendered-html { overflow-wrap: anywhere; word-break: break-word; }
+        .rendered-html > :first-child { margin-top: 0; }
+        .rendered-html > :last-child { margin-bottom: 0; }
+        .rendered-html pre {
+            background: var(--panel-2);
+            padding: 8px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .rendered-html code {
+            background: var(--panel-2);
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-family: var(--mono);
+            font-size: 12px;
+        }
+        .rendered-html a { color: var(--accent); text-decoration: underline; }
+        .rendered-html table { border-collapse: collapse; font-size: 12px; }
+        .rendered-html th, .rendered-html td { border: 1px solid var(--border); padding: 4px 8px; white-space: normal; }
+
         .page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
         .page-head h1 { margin: 0; }
         .page-head .spacer { flex: 1; }
