@@ -96,9 +96,13 @@ final class ToolProxyService
         $this->em->flush();
 
         // --- Log finished event ---
+        // Always carries the tool result (nested as a structured value, never
+        // a JSON-encoded string), so the timeline shows the full response;
+        // null on failure so the shape is consistent.
         $this->logEvent(Event::TYPE_TOOL_FINISHED, $event, [
             'tool' => $toolName,
             'ok' => $result->ok,
+            'result' => $toolCall->getResponse(),
             'error' => $result->error,
         ]);
 

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App;
 
+use App\Service\TimezoneService;
+
 use function in_array;
 
 use RuntimeException;
@@ -40,6 +42,13 @@ class Kernel extends BaseKernel
      */
     public function boot(): void
     {
+        // Make the deployment-wide timezone (TASKWEAVER_TIMEZONE, else the
+        // OS/system zone) PHP's default BEFORE the container boots so every
+        // `new DateTimeImmutable()` — entities, events, workflow timestamps,
+        // scheduler cursors — is created in the one timezone the app uses
+        // (SPEC.md → Configuration; TimezoneService).
+        TimezoneService::applyDefault();
+
         if ('prod' === $this->environment) {
             $this->assertProdSecretIsReal('APP_SECRET', (string) ($_SERVER['APP_SECRET'] ?? ''), 32);
             $this->assertProdSecretIsReal('TASKWEAVER_ENROLLMENT_TOKEN', (string) ($_SERVER['TASKWEAVER_ENROLLMENT_TOKEN'] ?? ''), 24);
