@@ -28,6 +28,18 @@ interface InternalTool
     public function schema(): array;
 
     /**
+     * Tags this tool answers to, for per-step toolbox scoping.
+     *
+     * Same rule as external ToolDefs (SPEC.md → Tool Wrangling via Tags):
+     * the tool is offered to a step iff `tool.tags ∩ step.tags ≠ ∅`. An
+     * empty tag list is effectively disabled — same semantics as an
+     * untagged ToolDef.
+     *
+     * @return list<string>
+     */
+    public function tags(): array;
+
+    /**
      * Execute the tool locally.
      *
      * @param array<string, mixed> $arguments

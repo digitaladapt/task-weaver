@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker\Tool;
 
+use function array_intersect;
+
 use RuntimeException;
 
 use function sprintf;
@@ -69,6 +71,35 @@ final class InternalToolRegistry
     {
         $schemas = [];
         foreach ($this->tools as $tool) {
+            $schemas[] = [
+                'name' => $tool->name(),
+                'description' => $tool->schema()['description'] ?? null,
+                'schema' => $tool->schema(),
+            ];
+        }
+
+        return $schemas;
+    }
+
+    /**
+     * Advertise only the internal tools a step's tags call for — the same
+     * per-step tool scoping external ToolDefs get (SPEC.md → Tool Wrangling
+     * via Tags): a tool is offered iff `tool.tags ∩ step.tags ≠ ∅`. Without
+     * this, every step saw every sanctioned internal tool whether or not
+     * its tags asked for it, bloating local-model context.
+     *
+     * @param list<string> $stepTags
+     *
+     * @return array<int, array{name: string, description: ?string, schema: array<string, mixed>}>
+     */
+    public function schemasForStep(array $stepTags): array
+    {
+        $schemas = [];
+        foreach ($this->tools as $tool) {
+            if ([] === array_intersect($tool->tags(), $stepTags)) {
+                continue;
+            }
+
             $schemas[] = [
                 'name' => $tool->name(),
                 'description' => $tool->schema()['description'] ?? null,
