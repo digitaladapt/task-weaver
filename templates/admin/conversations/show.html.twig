@@ -1,0 +1,90 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ conversation.name }} · TaskWeaver{% endblock %}
+
+{% block body %}
+    <div class="page-head">
+        <a href="{{ path('app_conversations') }}" class="btn btn-ghost">All conversations</a>
+        <span class="spacer"></span>
+        {% if conversation.sourceRunId %}
+            <span class="badge mono">source run {{ conversation.sourceRunId|slice(0, 8) }}</span>
+        {% endif %}
+    </div>
+    <h1>{{ conversation.name }}</h1>
+    <p class="subtitle">created {{ conversation.createdAt|date('Y-m-d H:i') }} · updated {{ conversation.updatedAt|date('Y-m-d H:i') }}</p>
+
+    <div class="panel">
+        <h3>Thread</h3>
+        {% if conversation.messages is empty %}
+            <div class="empty">No messages yet.</div>
+        {% else %}
+            {% for message in conversation.messages %}
+                <div class="msg-bubble {{ message.role }} {{ message.status }}">
+                    <div class="msg-head">
+                        <strong>{{ message.role == 'user' ? 'You' : 'TaskWeaver' }}</strong>
+                        {% if message.isSeed %}<span class="badge bg-accent">seeded from event</span>{% endif %}
+                        {% if message.role == 'user' %}
+                            <span class="badge status-{{ message.status }}">{{ message.status }}</span>
+                        {% endif %}
+                        <span class="muted" style="font-size:11px;">{{ message.createdAt|date('Y-m-d H:i') }}</span>
+                    </div>
+                    <div class="msg-content" style="white-space:pre-wrap;">{{ message.content }}</div>
+                    {% if message.tags is not empty %}
+                        <div class="tool-tags">
+                            {% for tag in message.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
+                        </div>
+                    {% endif %}
+                    {% if message.role == 'user' %}
+                        <details class="msg-tags-edit">
+                            <summary class="muted" style="cursor:pointer;">tags</summary>
+                            <form method="post" action="{{ path('app_conversation_message_tags', {id: conversation.id, messageId: message.id}) }}" class="inline" style="margin-top:6px;">
+                                <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
+                                <input type="text" name="tags" value="{{ message.tags|join(', ') }}" style="width:100%; max-width:360px;" placeholder="comma separated tags">
+                                <button type="submit" class="btn btn-small">Update</button>
+                            </form>
+                        </details>
+                    {% endif %}
+                    {% if message.role == 'assistant' and message.toolLogs|length > 0 %}
+                        <details class="msg-tool-log">
+                            <summary class="muted" style="cursor:pointer;">tool log ({{ message.toolLogs|length }})</summary>
+                            <div style="margin-top:8px;">
+                                {% for log in message.toolLogs %}
+                                    <div style="border-top:1px solid var(--border); padding:6px 0;">
+                                        <span class="tag">{{ log.toolName }}</span>
+                                        <span class="badge bg-{{ log.status == 'completed' ? 'green' : (log.status == 'failed' ? 'red' : 'yellow') }}">{{ log.status }}</span>
+                                        <details style="margin-top:4px;">
+                                            <summary class="muted" style="cursor:pointer;">args</summary>
+                                            <pre class="mono" style="background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px;">{{ log.arguments|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
+                                        </details>
+                                        {% if log.result is not null %}
+                                            <details style="margin-top:4px;">
+                                                <summary class="muted" style="cursor:pointer;">result</summary>
+                                                <pre class="mono" style="background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px;">{{ log.result|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
+                                            </details>
+                                        {% endif %}
+                                        {% if log.error %}
+                                            <div class="ev-meta">{{ log.error }}</div>
+                                        {% endif %}
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </details>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h3>Send a message</h3>
+        <form method="post" action="{{ path('app_conversation_message', {id: conversation.id}) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
+            <textarea name="content" rows="3" required style="width:100%;" placeholder="Ask something… a worker will pick this up like a task step."></textarea>
+            <div class="tool-tags">
+                <input type="text" name="tags" placeholder="optional tags (comma separated) — controls tools for this reply" style="width:100%; max-width:480px;">
+            </div>
+            <button type="submit" class="btn btn-primary">Send</button>
+        </form>
+        <p class="muted" style="font-size:12px; margin-top:8px;">Replies are answered one at a time (FIFO). While a reply is being worked on you’ll see it as “waiting for worker”.</p>
+    </div>
+{% endblock %}

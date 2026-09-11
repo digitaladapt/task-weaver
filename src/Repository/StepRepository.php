@@ -89,6 +89,7 @@ class StepRepository extends ServiceEntityRepository
             ->where('s.status = :pending OR (s.status = :running AND s.expiresAt < :now)')
             ->andWhere('t.status = :taskStatus')
             ->andWhere('t.deletedAt IS NULL')
+            ->andWhere('t.conversationId IS NULL')
             ->setParameter('pending', Step::STATUS_PENDING)
             ->setParameter('running', Step::STATUS_RUNNING)
             ->setParameter('now', $now)
@@ -124,6 +125,55 @@ class StepRepository extends ServiceEntityRepository
                 if (null !== $final && Step::STATUS_RUNNING === $final->getStatus()) {
                     continue;
                 }
+            }
+
+            return $step;
+        }
+
+        return null;
+    }
+
+    /**
+     * Find the next eligible reply-task step for a worker (conversations
+     * priority — docs/conversations-plan.md §5.2, D6).
+     *
+     * Same capability matching as normal steps: the worker must cover the
+     * step's SANDBOX capability tags; external-tool tags are proxied.
+     * Reply tasks have exactly one pending final step. Order: oldest
+     * conversation first (by task creation — FIFO for replies).
+     *
+     * @param string[] $workerTags
+     */
+    public function findClaimableByConversation(array $workerTags, DateTimeImmutable $now): ?Step
+    {
+        $externalTags = $this->getEntityManager()
+            ->getRepository(\App\Entity\ToolDef::class)
+            ->findLiveTagNames();
+
+        $candidates = $this->createQueryBuilder('s')
+            ->select('s', 't')
+            ->join('s.task', 't')
+            ->where('s.status = :pending OR (s.status = :running AND s.expiresAt < :now)')
+            ->andWhere('t.status = :taskStatus')
+            ->andWhere('t.deletedAt IS NULL')
+            ->andWhere('t.conversationId IS NOT NULL')
+            ->setParameter('pending', Step::STATUS_PENDING)
+            ->setParameter('running', Step::STATUS_RUNNING)
+            ->setParameter('now', $now)
+            ->setParameter('taskStatus', \App\Entity\Task::STATUS_READY)
+            ->orderBy('t.createdAt', 'ASC')
+            ->addOrderBy('s.sortOrder', 'ASC')
+            ->getQuery()
+            ->getResult();
+
+        foreach ($candidates as $step) {
+            if (!self::workerCoversStep($workerTags, $step->getTags(), $externalTags)) {
+                continue;
+            }
+            // Reply tasks are single-final-step; the step must be pending
+            // (or stale-running to be failed then retried).
+            if (Step::STATUS_RUNNING === $step->getStatus()) {
+                continue;
             }
 
             return $step;

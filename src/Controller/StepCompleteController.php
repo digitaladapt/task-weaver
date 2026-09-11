@@ -51,6 +51,9 @@ final class StepCompleteController extends AbstractController
             return $this->json(['error' => $e->getMessage()], Response::HTTP_CONFLICT);
         }
 
+        // (Reply-task materialization + hard-delete happens inside
+        // TaskWorkflowService::completeStep — docs/conversations-plan.md §5.1.)
+
         return $this->json([
             'ok' => true,
             'status' => 'completed',

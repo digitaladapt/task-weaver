@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Command;
 
+use App\Service\ConversationService;
 use App\Service\SchedulerService;
 use DateTimeImmutable;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -26,6 +27,7 @@ final class SchedulerTickCommand extends Command
 {
     public function __construct(
         private readonly SchedulerService $scheduler,
+        private readonly ConversationService $conversations,
     ) {
         parent::__construct();
     }
@@ -33,6 +35,11 @@ final class SchedulerTickCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->scheduler->tick(new DateTimeImmutable());
+
+        // Crash-safety sweep (docs/conversations-plan.md §5.5): terminal reply
+        // tasks that survived a controller crash before materialization/cleanup
+        // are swept idempotently.
+        $this->conversations->sweepOrphanReplyRuns();
 
         return Command::SUCCESS;
     }

@@ -1,0 +1,55 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Conversations · TaskWeaver{% endblock %}
+
+{% block body %}
+    <div class="page-head">
+        <h1>Conversations</h1>
+        <span class="spacer"></span>
+        <a href="{{ path('app_conversation_new') }}" class="btn btn-primary">New conversation</a>
+    </div>
+    <p class="subtitle">Chat threads. Each reply runs through a worker like a task step — the transcript and tool log live here, not in the task tables.</p>
+
+    <div class="panel">
+        {% if conversations is empty %}
+            <div class="empty">No conversations yet. Create one, or use “Follow up” on a step event.</div>
+        {% else %}
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Updated</th>
+                            <th>Status</th>
+                            <th>Last message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for conversation in conversations %}
+                            {% set last = conversation.messages|last %}
+                            {% set pending = conversation.messages|filter(m => m.role == 'user' and m.status in ['queued', 'running'])|length > 0 %}
+                            <tr>
+                                <td><a href="{{ path('app_conversation_show', {id: conversation.id}) }}">{{ conversation.name }}</a></td>
+                                <td>{{ conversation.updatedAt|date('Y-m-d H:i') }}</td>
+                                <td>
+                                    {% if pending %}
+                                        <span class="badge bg-yellow">waiting for worker</span>
+                                    {% else %}
+                                        <span class="badge">idle</span>
+                                    {% endif %}
+                                </td>
+                                <td class="muted">
+                                    {% if last %}
+                                        {{ last.content|slice(0, 80) }}{% if last.content|length > 80 %}…{% endif %}
+                                    {% else %}
+                                        —
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </div>
+{% endblock %}

@@ -137,6 +137,12 @@ class SchedulerServiceTest extends TestCase
             $this->emWithEventRepo(),
             new NullLogger(),
             $this->scheduler(),
+            new \App\Service\ConversationService(
+                $this->emWithEventRepo(),
+                $this->createStub(\App\Repository\MessageRepository::class),
+                new TimezoneService('UTC'),
+                new NullLogger(),
+            ),
             600,
         );
     }

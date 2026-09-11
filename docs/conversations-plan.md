@@ -1,6 +1,6 @@
 # Conversations & Follow-ups — Design Plan
 
-Status: **planning** — no code changes yet.
+Status: **implemented** (branch `feat/conversations-followups`) — see migration `Version20260911130000`, `ConversationService`, `ConversationController`, claim pass-1, and the UI under `templates/admin/conversations/`.
 Revision: **2** (after review) — replies are *transient* runs: create → run → log → hard-delete. No persistent per-conversation task/step/event residue.
 Scope: conversations as first-class standalone objects, follow-ups as a convenience action, step-level `run_id`, and messages-as-steps for replies.
 

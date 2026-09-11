@@ -55,6 +55,8 @@ final class StepController extends AbstractController
                 // unreachable, or the step is unrecoverable). Better than
                 // waiting for the lazy 600s expiry: the failure flows into
                 // the final step's envelope immediately.
+                // (Reply-run failure materialization + cleanup happens inside
+                // TaskWorkflowService::failStep — docs/conversations-plan.md §5.1.)
                 $workflow->failStep($step, $worker, '' !== $reason ? $reason : 'reported failed by worker');
             } else {
                 return $this->json(['error' => 'Only statuses "running" and "failed" are accepted here'], Response::HTTP_BAD_REQUEST);

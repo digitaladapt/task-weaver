@@ -162,6 +162,7 @@ final class ToolProxyService
         // without bloating the worker-facing response.
         $logEvent = new Event($event->getStep(), $event->getTask(), $event->getWorker(), $type);
         $logEvent->setPayload($payload);
+        $logEvent->setRunId($event->getStep()->getRunId());
         $this->em->persist($logEvent);
         $this->em->flush();
     }

@@ -77,6 +77,13 @@
                                 <pre class="mono" style="background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px;">{{ event.payload|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
                             </details>
                         {% endif %}
+                        {% if event.type in ['step_started', 'step_completed', 'step_failed'] %}
+                            <form method="post" action="{{ path('app_conversation_followup') }}" class="inline" style="margin-top:4px;">
+                                <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
+                                <input type="hidden" name="event_id" value="{{ event.id }}">
+                                <button type="submit" class="btn btn-small">Follow up</button>
+                            </form>
+                        {% endif %}
                         {% if event.toolCalls|length > 0 %}
                             <div class="ev-meta">
                                 {% for tc in event.toolCalls %}

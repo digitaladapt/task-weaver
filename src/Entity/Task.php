@@ -82,6 +82,14 @@ class Task
     private ?DateTimeImmutable $deletedAt = null;
 
     /**
+     * Non-null ⇒ this is a transient reply task for that conversation.
+     * Unique ⇒ at most one live reply run per conversation at any time.
+     * Hard-deleted after the reply is logged (D10).
+     */
+    #[ORM\Column(type: 'uuid', nullable: true, unique: true)]
+    private ?Uuid $conversationId = null;
+
+    /**
      * @var Collection<int, Step>
      */
     #[ORM\OneToMany(mappedBy: 'task', targetEntity: Step::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
@@ -273,6 +281,21 @@ class Task
         if (1 === count($steps) && 0 === count($final)) {
             throw new InvalidArgumentException('A single-step task must mark its step as final.');
         }
+    }
+
+    public function getConversationId(): ?Uuid
+    {
+        return $this->conversationId;
+    }
+
+    public function setConversationId(?Uuid $conversationId): void
+    {
+        $this->conversationId = $conversationId;
+    }
+
+    public function isReplyTask(): bool
+    {
+        return null !== $this->conversationId;
     }
 
     public function getFinalStep(): ?Step
