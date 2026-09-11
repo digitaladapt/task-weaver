@@ -274,10 +274,8 @@ final class RunCommand extends Command
         $stepDescription = (string) ($stepData['description'] ?? '');
         $isFinal = (bool) ($stepData['is_final'] ?? false);
 
-        // System prompt: override if issued, else the image default.
-        $system = '' !== $systemPromptOverride
-            ? $systemPromptOverride
-            : $this->systemPrompt($stepName, $stepTags, $isFinal);
+        // System prompt: always include step info; override replaces the base text.
+        $system = $this->buildSystemPrompt($systemPromptOverride, $stepName, $stepTags, $isFinal);
 
         // Final step: consume the tool-call-results envelope of all prior
         // steps (SPEC.md → Final-Step Input). Non-final steps don't see it.
@@ -535,22 +533,31 @@ final class RunCommand extends Command
         $now = new DateTimeImmutable();
 
         return sprintf(
-            'Current date/time: %s (UTC). Timezone: %s',
+            "Current date/time: %s (%s)",
             $now->format('Y-m-d H:i:s'),
             $now->getTimezone()->getName(),
         );
     }
 
-    private function systemPrompt(string $stepName, array $stepTags, bool $isFinal): string
+    /**
+     * Always include step info; a controller-issued override replaces the
+     * base worker persona text, not the step framing.
+     */
+    private function buildSystemPrompt(string $override, string $stepName, array $stepTags, bool $isFinal): string
     {
         $finalNote = $isFinal
             ? "\nThis is the FINAL step: you consume prior-step results and produce the task's final output."
             : '';
 
+        $base = '' !== $override
+            ? $override
+            : "You are a TaskWeaver worker.\n".
+              "You may call the tools provided below. They are executed by the controller on your behalf.\n".
+              'Raw tool data may be noisy; interpret it and answer only what the step asked for.';
+
         return sprintf(
-            "You are a TaskWeaver worker. You are running step \"%s\" (tags: %s).%s\n".
-            "You may call the tools provided below. They are executed by the controller on your behalf.\n".
-            'Raw tool data may be noisy; interpret it and answer only what the step asked for.',
+            "%s\nYou are running step \"%s\" (tags: %s).%s",
+            $base,
             $stepName,
             implode(', ', $stepTags),
             $finalNote,
