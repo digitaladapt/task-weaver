@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace TaskWeaverWorker\Command;
 
 use function count;
+use function date_default_timezone_set;
 
 use DateTimeImmutable;
+use DateTimeZone;
+use Exception;
 
 use function in_array;
 use function is_array;
@@ -112,6 +115,21 @@ final class RunCommand extends Command
         $output->writeln(sprintf('Provisioned worker %s (tags: %s)', $provisioned['worker_id'] ?? '?', implode(',', $provisioned['tags'] ?? [])));
 
         $config = is_array($provisioned['config'] ?? null) ? $provisioned['config'] : [];
+
+        // Deployment-wide timezone (controller-issued, SPEC.md →
+        // Configuration). Set PHP's default here so the worker's own
+        // timestamps / grounding report the same wall-clock as the
+        // controller — never the container's UTC default.
+        $workerTimezone = $config['timezone'] ?? null;
+        if (is_string($workerTimezone) && '' !== $workerTimezone) {
+            // Validate the IANA name; only then set it as the process default.
+            try {
+                new DateTimeZone($workerTimezone);
+                date_default_timezone_set($workerTimezone);
+            } catch (Exception) {
+                // Invalid controller-issued zone: stay on the process default.
+            }
+        }
 
         // The controller is the source of truth for the LLM channel
         // (WORKER.md provision -> config.llm_url). Prefer the controller's
@@ -533,7 +551,7 @@ final class RunCommand extends Command
         $now = new DateTimeImmutable();
 
         return sprintf(
-            "Current date/time: %s (%s)",
+            'Current date/time: %s (%s)',
             $now->format('Y-m-d H:i:s'),
             $now->getTimezone()->getName(),
         );

@@ -87,7 +87,7 @@ All tunable settings — timeouts (including the step timeout), context limits, 
 | `TASKWEAVER_LLM_API_KEY` | *(none)* | API key for the LLM provider (e.g. OpenAI/Anthropic key). Held **only by the controller** (read at request time, never persisted, never issued to workers). When set, the worker's LLM traffic is proxied through TaskWeaver. |
 | `TASKWEAVER_ENROLLMENT_TOKEN` | `dev-enrollment-token` | One-time token workers present at provision time (Tier-0). |
 | `TASKWEAVER_SYSTEM_PROMPT_OVERRIDE` | *(none)* | Optional system-prompt override issued to workers via provision `config` (`system_prompt_override`). |
-| `TASKWEAVER_TIMEZONE` | *(system default)* | Deployment-wide timezone used by the scheduler (e.g. `America/New_York`). When unset, falls back to PHP's `date_default_timezone_get()` (the system timezone). v1 is single-tenant — there is no per-task timezone UI control; each task is stamped with this value at creation for future multi-user support. |
+| `TASKWEAVER_TIMEZONE` | *(system timezone)* | Deployment-wide timezone for **ALL** timestamps (scheduler cursors, created/updated, step start/finish/expiry, event logs, worker grounding), e.g. `America/New_York`. When unset, resolves the OS/system timezone (`TZ` env → `/etc/timezone` → `/etc/localtime` → PHP default) and is set as PHP's process default at kernel boot. Timestamps are stored and displayed as wall-clock in this zone — never UTC-converted. v1 is single-tenant — no per-task timezone UI control; each task is stamped with this value at creation for future multi-user support. |
 
 ### LLM channel: direct vs. proxied
 
@@ -354,13 +354,13 @@ Everything is logged, differentiated by the event `type` field:
 | `info` | Generic log line | worker |
 | `llm_call` | An LLM inference round (prompt / completion metadata) | worker |
 | `tool_requested` | The tool call as emitted by the LLM | worker |
-| `tool_finished` | The result returned from the MCP server | TaskWeaver (proxy) |
+| `tool_finished` | The result returned from the MCP server (always incl. the nested `result`; `null` on failure) | TaskWeaver (proxy) |
 | `tool_internal` | A worker-local tool call | worker |
 | `step_started` / `step_completed` / `step_failed` | Step lifecycle | TaskWeaver + worker |
 | `error` | Any error, incl. failed-step messages | both |
 | `step_result` | The submitted result of a completed step | TaskWeaver |
 
-Tool-call granularity is captured twice: the LM's request (`tool_requested`) and the MCP response (`tool_finished`) — both linked to the same step so the timeline reads end to end.
+Tool-call granularity is captured twice: the LM's request (`tool_requested`) and the MCP response (`tool_finished`) — both linked to the same step so the timeline reads end to end. The `tool_finished` payload carries the full result nested as a structured value (`result`), never JSON-encoded into a string: `{ tool, ok, result, error }` where `result` is `null` when `ok` is false.
 
 ## Claiming & Matching (tag-based)
 

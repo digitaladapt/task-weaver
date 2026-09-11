@@ -1,3 +1,19 @@
+{% macro render_payload(value, label) %}
+    {% set prepared = value|payload_prepare(label) %}
+    <pre class="mono json-block">{{ prepared.json|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
+    {% if prepared.sections is not empty %}
+        <div class="payload-rendered">
+            <div class="rendered-title muted">rendered content</div>
+            {% for section in prepared.sections %}
+                <div class="rendered-section">
+                    <div class="rendered-path mono">{{ section.path }}</div>
+                    <div class="rendered-html">{{ section.html|raw }}</div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endmacro %}
+
 {% extends 'base.html.twig' %}
 
 {% block title %}{{ task.name }} · TaskWeaver{% endblock %}
@@ -50,7 +66,7 @@
                     {% if step.result %}
                         <details style="margin-top:6px;">
                             <summary class="muted" style="cursor:pointer;">result</summary>
-                            <pre class="mono" style="background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px;">{{ step.result|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
+                            {{ _self.render_payload(step.result, 'result') }}
                         </details>
                     {% endif %}
                 </div>
@@ -74,7 +90,7 @@
                         {% if event.payload is not empty %}
                             <details>
                                 <summary class="muted" style="cursor:pointer;">payload</summary>
-                                <pre class="mono" style="background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px;">{{ event.payload|json_encode(constant('JSON_PRETTY_PRINT')) }}</pre>
+                                {{ _self.render_payload(event.payload, 'event.payload') }}
                             </details>
                         {% endif %}
                         {% if event.toolCalls|length > 0 %}

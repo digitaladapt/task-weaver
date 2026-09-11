@@ -11,6 +11,7 @@ use App\Entity\Task;
 use App\Entity\ToolCall;
 use App\Entity\ToolDef;
 use App\Entity\Worker;
+use App\Service\TimezoneService;
 
 use function count;
 
@@ -44,6 +45,7 @@ final class SeedCommand extends Command
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly string $environment,
+        private readonly TimezoneService $timezone = new TimezoneService(),
     ) {
         parent::__construct();
     }
@@ -147,6 +149,7 @@ final class SeedCommand extends Command
         // Left pristine so there's a "ready" example to claim from the UI.
         $task1 = new Task('Say hello', 'Produce a short greeting.');
         $task1->setStatus(Task::STATUS_READY);
+        $task1->setTimezone($this->timezone->resolve());
         $this->em->persist($task1);
         $step1 = new Step('Greet', 'Say hello and report it.');
         $step1->setTags(['echo']);
@@ -156,6 +159,7 @@ final class SeedCommand extends Command
 
         // --- Sample multi-step task: ran to completion with a full event log ---
         $task2 = new Task('Daily brief', 'Produce a daily brief from weather.');
+        $task2->setTimezone($this->timezone->resolve());
         $this->em->persist($task2);
 
         $step2a = new Step('Weather', 'Fetch the weather for London.');
@@ -215,6 +219,8 @@ final class SeedCommand extends Command
 
         $e4 = $this->makeEvent($step2a, Event::TYPE_TOOL_FINISHED, $worker, [
             'tool' => 'weather.get',
+            'ok' => true,
+            'result' => $weatherResult,
             'duration_ms' => 412,
         ], $t3);
 
@@ -259,6 +265,7 @@ final class SeedCommand extends Command
         // consumes all three results via the tool-call-results envelope.
         $task4 = new Task('Tool gauntlet', 'Call three different demo tools in parallel steps, then summarize the results.');
         $task4->setStatus(Task::STATUS_READY);
+        $task4->setTimezone($this->timezone->resolve());
         $this->em->persist($task4);
 
         $g1 = new Step('Echo step', 'Call the demo.echo tool with the message "hello gauntlet" and report what came back.');
@@ -289,6 +296,7 @@ final class SeedCommand extends Command
         // Demonstrates the error/step_failed path: the third-party status API
         // returned 503, so the step failed and the task is marked failed.
         $task3 = new Task('Site status check', 'Check whether the public site is up.');
+        $task3->setTimezone($this->timezone->resolve());
         $this->em->persist($task3);
 
         $step3 = new Step('Check status', 'Query the external status endpoint for the site.');
@@ -342,6 +350,9 @@ final class SeedCommand extends Command
 
         $this->makeEvent($step3, Event::TYPE_TOOL_FINISHED, $worker, [
             'tool' => 'status.get',
+            'ok' => false,
+            'result' => null,
+            'error' => 'upstream 503: status endpoint timed out',
             'status' => 'error',
             'duration_ms' => 3020,
         ], $u4);

@@ -39,6 +39,7 @@ final class ProvisionService
         private readonly string $llmModel = 'Qwen3.5-4B',
         private readonly ?string $systemPromptOverride = null,
         private readonly string $llmApiKey = '',
+        private readonly TimezoneService $timezone = new TimezoneService(),
     ) {
     }
 
@@ -92,6 +93,10 @@ final class ProvisionService
                 'output_buffer_size' => $this->contextOutputBuffer,
             ],
             'llm_max_concurrency' => $this->llmMaxConcurrency,
+            // Deployment timezone (SPEC.md → Configuration): the worker sets
+            // its process default from this so grounding / any local time
+            // math reports the same wall-clock as the controller.
+            'timezone' => $this->timezone->resolve(),
         ]);
         $worker->markSeen();
         $this->em->flush();
