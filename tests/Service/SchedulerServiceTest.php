@@ -313,4 +313,46 @@ class SchedulerServiceTest extends TestCase
         $this->expectException(LogicException::class);
         $this->workflow()->resetForRun($task);
     }
+
+    // ── Timezone awareness (SPEC.md → Configuration) ─────────────────────
+
+    public function testNextRunIsInterpretedInTheDeploymentTimezone(): void
+    {
+        // A daily 08:00 schedule in America/New_York must produce a cursor
+        // that IS 08:00 in that zone — not 08:00 UTC (which would be 04:00
+        // New York during EDT, i.e. wrong by four hours).
+        $tz = new TimezoneService('America/New_York');
+        $scheduler = new SchedulerService(
+            $this->createStub(EntityManagerInterface::class),
+            $this->createStub(\App\Repository\TaskRepository::class),
+            $tz,
+        );
+
+        $task = $this->recurringTask('0 8 * * *', null);
+        $now = new DateTimeImmutable('2026-09-07 10:00:00', new DateTimeZone('America/New_York'));
+        $next = $scheduler->nextRunAt($task, $now);
+
+        // Mon 10:00 NY → Tue 08:00 NY.
+        self::assertSame('2026-09-08 08:00:00', $next->setTimezone(new DateTimeZone('America/New_York'))->format('Y-m-d H:i:s'));
+    }
+
+    public function testIsDueUsesTheDeploymentTimezoneForCron(): void
+    {
+        // Cron minute matching happens in the deployment zone (the scheduler
+        // converts `now` to it before asking cron). An 08:00 NY cron must be
+        // due at 08:00 in America/New_York, not at 08:00 UTC.
+        $tz = new TimezoneService('America/New_York');
+        $scheduler = new SchedulerService(
+            $this->createStub(EntityManagerInterface::class),
+            $this->createStub(\App\Repository\TaskRepository::class),
+            $tz,
+        );
+
+        $task = $this->recurringTask('0 8 * * *', null);
+        $ny = new DateTimeZone('America/New_York');
+
+        // 07:59 in the deployment zone → not due; 08:00 → due.
+        self::assertFalse($scheduler->isDue($task, new DateTimeImmutable('2026-09-08 07:59:00', $ny)));
+        self::assertTrue($scheduler->isDue($task, new DateTimeImmutable('2026-09-08 08:00:00', $ny)));
+    }
 }
