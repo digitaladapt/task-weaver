@@ -85,8 +85,12 @@ final class ContextBudget
      * token share of the request budget. Long string values are truncated;
      * deep arrays are flattened to a summary. Order: keep keys, cap values.
      *
+     * Token limits are CHAR limits: 1 token ≈ 4 chars (self::CHARS_PER_TOKEN),
+     * so a cap of N tokens is a cap of N × 4 characters. Never compare the
+     * configured token cap against a raw character count.
+     *
      * @param array<string, mixed> $result
-     * @param int                  $maxTokens per-result cap
+     * @param int                  $maxTokens per-result token cap (1 token ≈ 4 chars)
      *
      * @return array<string, mixed>
      */
@@ -99,14 +103,15 @@ final class ContextBudget
 
         // Too big — deep-truncate string values, then hard-truncate the
         // whole payload if still over.
-        $capped = $this->truncateStrings($result, max(64, $maxTokens * 2));
+        $capped = $this->truncateStrings($result, max(64, $maxTokens * self::CHARS_PER_TOKEN / 2));
 
         $encoded = (string) (json_encode($capped, JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}');
         if ($this->estimateTokens($encoded) <= $maxTokens) {
             return $capped;
         }
 
-        // Still too big: hard-truncate the encoded form and note it.
+        // Still too big: hard-truncate the encoded form to the token cap
+        // expressed in chars (N tokens ≈ N × 4 chars) and note it.
         $chars = max(256, $maxTokens * self::CHARS_PER_TOKEN);
         $hard = substr($encoded, 0, $chars);
 
