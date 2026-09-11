@@ -131,13 +131,13 @@
         .empty { color: var(--muted); font-style: italic; padding: 12px; }
 
         .timeline { list-style: none; margin: 0; padding: 0; }
-        .timeline li {
+        .timeline > li {
             padding: 8px 0 8px 16px;
             border-left: 2px solid var(--border);
             position: relative;
             margin-left: 4px;
         }
-        .timeline li::before {
+        .timeline > li::before {
             content: "";
             position: absolute;
             left: -5px; top: 12px;
@@ -145,10 +145,10 @@
             border-radius: 50%;
             background: var(--border);
         }
-        .timeline li.type-step_started::before   { background: var(--accent); }
-        .timeline li.type-step_completed::before { background: var(--green); }
-        .timeline li.type-step_failed::before    { background: var(--red); }
-        .timeline li.type-error::before          { background: var(--red); }
+        .timeline > li.type-step_started::before   { background: var(--accent); }
+        .timeline > li.type-step_completed::before { background: var(--green); }
+        .timeline > li.type-step_failed::before    { background: var(--red); }
+        .timeline > li.type-error::before          { background: var(--red); }
         .timeline .t { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-right: 8px; }
         .timeline .ev-meta { margin-top: 2px; font-size: 12px; color: var(--muted); }
 

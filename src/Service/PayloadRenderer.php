@@ -112,7 +112,7 @@ final class PayloadRenderer
                     // Compact marker: the page shows the leaf in the rendered
                     // section only; keep a hint in the JSON view so the shape
                     // stays obvious (no giant string duplicated on the page).
-                    $out[$key] = sprintf('[rendered — see section "%s"]', $nodePath);
+                    $out[$key] = '[rendered below]';
 
                     continue;
                 }
