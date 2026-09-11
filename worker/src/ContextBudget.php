@@ -103,7 +103,7 @@ final class ContextBudget
 
         // Too big — deep-truncate string values, then hard-truncate the
         // whole payload if still over.
-        $capped = $this->truncateStrings($result, max(64, $maxTokens * self::CHARS_PER_TOKEN / 2));
+        $capped = $this->truncateStrings($result, max(64, $maxTokens * self::CHARS_PER_TOKEN * 2));
 
         $encoded = (string) (json_encode($capped, JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}');
         if ($this->estimateTokens($encoded) <= $maxTokens) {
