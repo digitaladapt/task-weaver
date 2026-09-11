@@ -168,4 +168,14 @@ final class ProvisionServiceTest extends TestCase
             self::assertSame('/api/worker/llm', $result['config']['llm_url']);
         }
     }
+
+    public function testTimezoneIsIssuedToWorkers(): void
+    {
+        // Workers must know the deployment timezone (SPEC.md → Configuration)
+        // so their grounding reports the same wall-clock as the controller.
+        $result = $this->service()->provision('enrollment-token', 'dev-worker', []);
+
+        self::assertArrayHasKey('timezone', $result['config']);
+        self::assertSame((new \App\Service\TimezoneService())->resolve(), $result['config']['timezone']);
+    }
 }
