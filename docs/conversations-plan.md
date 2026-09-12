@@ -12,7 +12,7 @@ TaskWeaver today is: tasks → steps → events (an audit trail). We are adding 
 
 - A **conversation** is a thread of **messages**, completely standalone — nothing requires a task to exist.
 - A **follow-up** is a convenience button on a `step_*` event: it creates a conversation seeded with that event's **response** and redirects you there. It does *not* replay tool calls.
-- Each **message carries tags**, so you can add/remove tags mid-conversation and thereby adjust which **tools are available for a given response**.
+- Each **message carries tags**, so you can adjust which **tools are available for a given response**. Tags are chosen on the composer when sending (with the step editor's tag picker); sent messages are read-only.
 - **Messages hold end-results**; a per-message **tool log** holds the details of what the LLM did (tool calls, args, results) before producing that response.
 - A chat **reply is functionally a step**: the controller presents it to a worker exactly like a task-step, so the worker can't tell the difference and needs **no changes**.
 
@@ -208,8 +208,8 @@ Rules:
 
 - The **latest queued user message's tags** govern its reply's step tags (and therefore the toolbox, via the existing `ToolResolver::schemasForStep`).
 - If the latest user message has **no tags**, fall back to the **conversation's seed tags** (copied from the source step's tags at follow-up time; empty for hand-created conversations).
-- Editing a message's tags mid-conversation (UI: tag chips on each message) only affects the **next** response — that's exactly "adjust tools for any given response message."
-- Step tags are set at `ensureReplyRun()` time, so a queued message's tags are honored even if an edit happens before claim.
+- Tags are picked **when sending** the message (the composer prefills the most recent tagged message's tags — adjust them before hitting Send to change the tools for that reply). Sent messages are read-only: their tags render in a collapsible section, there is no edit affordance.
+- Step tags are set at `ensureReplyRun()` time, from the message's tags, so they are fixed the moment the message is queued.
 
 ### 6.3 Follow-up seeding
 
@@ -249,7 +249,7 @@ Messages stay **lean** (content = final answer only); the tool log holds the mac
 
 - **Nav**: add `Conversations` link in `base.html.twig`.
 - **`/conversations`** (`ConversationController::index`): list — name, updated_at, last message preview, status badge (`waiting for worker` if a message is queued/running, `idle` otherwise).
-- **`/conversations/{id}`** (`show`): thread view (user/assistant bubbles), seed badge on `is_seed`, status pills per message (queued/running/completed/failed), **tag chips per message** (add/remove → `PATCH /conversations/{id}/messages/{messageId}`), reply input, **tool-log drawer** per assistant message (renders `message_tool_log`, collapsible).
+- **`/conversations/{id}`** (`show`): thread view (user/assistant bubbles), seed badge on `is_seed`, status pills per message (queued/running/completed/failed), **read-only tag chips per message** in a collapsible section, and a composer that mirrors the task step editor (same `textarea.input` styling, same tag picker with autocomplete dropdown; **prefilled with the most recent tagged message's tags**). **Tool-log drawer** per assistant message (renders `message_tool_log`, collapsible).
 - **Task show** (`templates/admin/tasks/show.html.twig`): on each `step_*` event in the recent-events timeline, a small **Follow up** button → `POST /conversations/follow-up` (CSRF) → redirect to the conversation. Only `step_*` types get the button (D2).
 - Transient reply tasks are excluded from the Tasks list and dashboard counts (§3.2); they exist only for the duration of a run.
 
@@ -263,7 +263,7 @@ Messages stay **lean** (content = final answer only); the tool log holds the mac
 | `src/Entity/Conversation.php`, `Message.php`, `MessageToolLog.php` | Entities + repos |
 | `src/Repository/ConversationRepository.php`, `MessageRepository.php`, `MessageToolLogRepository.php` | Queries (`findWithQueuedMessage`, etc.) |
 | `src/Service/ConversationService.php` | ensureReplyRun, followup, postMessage, onStepTerminal, materializeReply, sweepOrphanReplyRuns |
-| `src/Controller/ConversationController.php` | index/show/message post/message tag patch/follow-up |
+| `src/Controller/ConversationController.php` | index/show/message post/follow-up |
 | `templates/admin/conversations/{index,show}.html.twig` | UI |
 | `migrations/Version2026xxx.php` | new tables + `event.run_id`, `step.run_id`, `task.conversation_id` |
 

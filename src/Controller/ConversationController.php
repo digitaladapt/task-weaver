@@ -6,15 +6,14 @@ namespace App\Controller;
 
 use App\Entity\Conversation;
 use App\Entity\Event;
-use App\Entity\Message;
 use App\Repository\ConversationRepository;
 use App\Repository\EventRepository;
-use App\Repository\MessageRepository;
 use App\Service\ConversationService;
 use App\Service\TagService;
 
 use function array_filter;
 use function array_map;
+use function array_reverse;
 use function array_values;
 
 use Doctrine\ORM\EntityManagerInterface;
@@ -85,7 +84,27 @@ final class ConversationController extends AbstractController
         return $this->render('admin/conversations/show.html.twig', [
             'conversation' => $conversation,
             'all_tags' => $tags->allKnown(),
+            'default_tags' => $this->defaultTags($conversation),
         ]);
+    }
+
+    /**
+     * Composer prefill: the tags of the most recent message that carries any.
+     * Assistant replies carry no tags, so this is effectively "the tags last
+     * used in the thread" — the sensible default for the next reply. Sent
+     * messages themselves are read-only.
+     *
+     * @return string[]
+     */
+    private function defaultTags(Conversation $conversation): array
+    {
+        foreach (array_reverse($conversation->getMessages()->toArray()) as $message) {
+            if ([] !== $message->getTags()) {
+                return $message->getTags();
+            }
+        }
+
+        return [];
     }
 
     #[Route('/{id}/messages', name: 'app_conversation_message', methods: ['POST'], requirements: ['id' => '[0-9a-fA-F-]{36}'])]
@@ -106,30 +125,6 @@ final class ConversationController extends AbstractController
         $tags = $this->parseTags((string) $request->request->get('tags', ''));
         $this->conversations->postMessage($conversation, $content, $tags);
         $this->addFlash('success', 'Message queued for a worker.');
-
-        return $this->redirectToRoute('app_conversation_show', ['id' => $id]);
-    }
-
-    #[Route('/{id}/messages/{messageId}', name: 'app_conversation_message_tags', methods: ['PATCH', 'POST'], requirements: ['id' => '[0-9a-fA-F-]{36}', 'messageId' => '[0-9a-fA-F-]{36}'])]
-    public function messageTags(
-        ConversationRepository $repo,
-        MessageRepository $messages,
-        Request $request,
-        string $id,
-        string $messageId,
-    ): Response {
-        $conversation = $this->findConversation($repo, $id);
-
-        $message = $messages->find(Uuid::fromString($messageId)->toRfc4122());
-        if (!$message instanceof Message || $message->getConversation()->getId() !== $conversation->getId()) {
-            throw $this->createNotFoundException('Message not found');
-        }
-
-        $tags = $this->parseTags((string) $request->request->get('tags', ''));
-        $message->setTags($tags);
-        $conversation->touch();
-        $this->em->flush();
-        $this->addFlash('success', 'Message tags updated.');
 
         return $this->redirectToRoute('app_conversation_show', ['id' => $id]);
     }

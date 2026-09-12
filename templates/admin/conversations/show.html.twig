@@ -30,18 +30,11 @@
                     </div>
                     <div class="msg-content" style="white-space:pre-wrap;">{{ message.content }}</div>
                     {% if message.tags is not empty %}
-                        <div class="tool-tags">
-                            {% for tag in message.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
-                        </div>
-                    {% endif %}
-                    {% if message.role == 'user' %}
-                        <details class="msg-tags-edit">
+                        <details class="msg-tags">
                             <summary class="muted" style="cursor:pointer;">tags</summary>
-                            <form method="post" action="{{ path('app_conversation_message_tags', {id: conversation.id, messageId: message.id}) }}" class="inline" style="margin-top:6px;">
-                                <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
-                                <input type="text" name="tags" value="{{ message.tags|join(', ') }}" style="width:100%; max-width:360px;" placeholder="comma separated tags">
-                                <button type="submit" class="btn btn-small">Update</button>
-                            </form>
+                            <div class="tool-tags" style="margin-top:6px;">
+                                {% for tag in message.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
+                            </div>
                         </details>
                     {% endif %}
                     {% if message.role == 'assistant' and message.toolLogs|length > 0 %}
@@ -79,12 +72,274 @@
         <h3>Send a message</h3>
         <form method="post" action="{{ path('app_conversation_message', {id: conversation.id}) }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
-            <textarea name="content" rows="3" required style="width:100%;" placeholder="Ask something… a worker will pick this up like a task step."></textarea>
-            <div class="tool-tags">
-                <input type="text" name="tags" placeholder="optional tags (comma separated) — controls tools for this reply" style="width:100%; max-width:480px;">
+            <div class="field">
+                <textarea name="content" rows="3" required class="input" placeholder="Ask something… a worker will pick this up like a task step."></textarea>
+            </div>
+            <div class="field">
+                <label>Tags <span class="muted">(tool tags this reply may use)</span></label>
+                <div class="tag-field" data-tag-field>
+                    <div class="tag-bubbles" data-tag-bubbles>
+                        {% for tag in default_tags %}
+                            <span class="tag-bubble" data-tag="{{ tag }}">{{ tag }}<span class="tag-x" data-remove-tag>&times;</span></span>
+                        {% endfor %}
+                    </div>
+                    <input type="text" class="tag-input" placeholder="Type a tag or choose…" autocomplete="off" data-tag-input>
+                    <input type="hidden" name="tags" value="{{ default_tags|join(',') }}" data-tag-value>
+                    <div class="tag-dropdown" data-tag-dropdown hidden></div>
+                </div>
             </div>
             <button type="submit" class="btn btn-primary">Send</button>
         </form>
         <p class="muted" style="font-size:12px; margin-top:8px;">Replies are answered one at a time (FIFO). While a reply is being worked on you’ll see it as “waiting for worker”.</p>
     </div>
+{% endblock %}
+
+{% block stylesheets %}
+    <style>
+        .field { margin-bottom: 12px; }
+        .field label {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--muted);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+        .input {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .input:focus { outline: none; border-color: var(--accent); }
+        textarea.input { resize: vertical; font-family: inherit; }
+
+        /* Tag picker (same look/behavior as the task step editor) */
+        .tag-field { position: relative; }
+        .tag-bubbles { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+        .tag-bubble {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--panel);
+            border: 1px solid var(--accent);
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--accent);
+        }
+        .tag-x {
+            cursor: pointer;
+            font-weight: 700;
+            opacity: .7;
+        }
+        .tag-x:hover { opacity: 1; }
+        .tag-input {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .tag-input:focus { outline: none; border-color: var(--accent); }
+        .tag-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 30;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-top: 4px;
+            max-height: 220px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0,0,0,.5);
+            padding: 4px;
+        }
+        .tag-dropdown .tag-option {
+            padding: 7px 10px;
+            border-radius: 5px;
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .tag-dropdown .tag-option:hover, .tag-dropdown .tag-option.hover {
+            background: var(--panel);
+            color: var(--accent);
+        }
+        .tag-dropdown .tag-option.empty { color: var(--muted); cursor: default; font-style: italic; font-family: inherit; justify-content: flex-start; }
+    </style>
+{% endblock %}
+
+{% block javascripts %}
+    <script>
+    (function () {
+        const ALL_TAGS = {{ all_tags|json_encode|raw }};
+        const field = document.querySelector('[data-tag-field]');
+        if (!field) return;
+
+        // ── Tag picker (mirrors the task step editor's behavior) ─────────
+        function selectedTags() {
+            return (field.querySelector('[data-tag-value]').value || '')
+                .split(',')
+                .map(s => s.trim())
+                .filter(Boolean);
+        }
+        function setSelected(tags) {
+            const valueEl = field.querySelector('[data-tag-value]');
+            valueEl.value = tags.join(',');
+            const bubbles = field.querySelector('[data-tag-bubbles]');
+            bubbles.innerHTML = '';
+            tags.forEach(function (t) {
+                const el = document.createElement('span');
+                el.className = 'tag-bubble';
+                el.dataset.tag = t;
+                el.innerHTML = t + '<span class="tag-x" data-remove-tag>&times;</span>';
+                bubbles.appendChild(el);
+            });
+        }
+        // Conversation tags are consumers, not creators: only known tags may
+        // be committed. Matching is case-insensitive; a unique prefix match
+        // resolves to the real tag.
+        function knownTagFor(typed) {
+            const t = typed.toLowerCase();
+            const exact = ALL_TAGS.find(x => x.toLowerCase() === t);
+            if (exact) return exact;
+            const matches = ALL_TAGS.filter(x => x.toLowerCase().startsWith(t));
+            return matches.length === 1 ? matches[0] : null;
+        }
+
+        // ── Dropdown positioning (portal, same as the task form) ─────────
+        let openDropdown = null;
+        let openField = null;
+        function pinDropdown(dd, input) {
+            if (dd.parentNode !== document.body) {
+                document.body.appendChild(dd);
+            }
+            dd.style.position = 'fixed';
+            dd.style.zIndex = '1000';
+            dd.style.right = 'auto';
+            const r = input.getBoundingClientRect();
+            dd.style.left = r.left + 'px';
+            dd.style.width = r.width + 'px';
+            const gap = 4;
+            dd.style.maxHeight = 'min(220px, calc(100vh - ' + (r.bottom + gap) + 'px - 8px))';
+            dd.style.bottom = 'auto';
+            dd.style.top = (r.bottom + gap) + 'px';
+            const spaceBelow = window.innerHeight - r.bottom - gap;
+            if (spaceBelow < 120 && r.top > dd.offsetHeight + 8) {
+                dd.style.top = 'auto';
+                dd.style.bottom = (window.innerHeight - r.top + gap) + 'px';
+            }
+            openDropdown = dd;
+            openField = field;
+        }
+        function repositionOpen() {
+            if (!openDropdown || !openField) return;
+            const input = openField.querySelector('[data-tag-input]');
+            pinDropdown(openDropdown, input);
+        }
+        window.addEventListener('scroll', repositionOpen, true);
+        window.addEventListener('resize', repositionOpen);
+        function hideDropdown() {
+            const dd = field._tagDropdown;
+            if (dd) {
+                if (dd.parentNode !== field) field.appendChild(dd);
+                dd.hidden = true;
+                dd.innerHTML = '';
+            }
+            openDropdown = null;
+            openField = null;
+        }
+        function renderDropdown(filter) {
+            const input = field.querySelector('[data-tag-input]');
+            const dd = field._tagDropdown;
+            const current = selectedTags();
+            const f = (filter || '').toLowerCase().trim();
+            const options = ALL_TAGS.filter(t =>
+                t.toLowerCase().includes(f) && !current.includes(t)
+            ).slice(0, 12);
+
+            if (options.length === 0 && !filter) {
+                hideDropdown();
+                return;
+            }
+            dd.hidden = false;
+            dd.innerHTML = '';
+            if (options.length === 0) {
+                const div = document.createElement('div');
+                div.className = 'tag-option empty';
+                div.textContent = filter ? 'No matching tags' : 'No more tags';
+                dd.appendChild(div);
+            } else {
+                options.forEach(function (t) {
+                    const div = document.createElement('div');
+                    div.className = 'tag-option';
+                    div.textContent = t;
+                    div.addEventListener('mousedown', function (ev) {
+                        ev.preventDefault(); // keep input focus
+                        const sel = selectedTags();
+                        if (!sel.includes(t)) sel.push(t);
+                        setSelected(sel);
+                        input.value = '';
+                        renderDropdown('');
+                    });
+                    dd.appendChild(div);
+                });
+            }
+            pinDropdown(dd, input);
+        }
+
+        field._tagDropdown = field.querySelector('[data-tag-dropdown]');
+        const input = field.querySelector('[data-tag-input]');
+
+        input.addEventListener('focus', function () { renderDropdown(input.value); });
+        input.addEventListener('input', function () { renderDropdown(input.value); });
+
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ',') {
+                e.preventDefault();
+                const val = input.value.trim();
+                const resolved = val ? knownTagFor(val) : null;
+                if (!resolved) {
+                    renderDropdown(input.value);
+                    return;
+                }
+                const sel = selectedTags();
+                if (!sel.includes(resolved)) sel.push(resolved);
+                setSelected(sel);
+                input.value = '';
+                renderDropdown('');
+            } else if (e.key === 'Escape') {
+                hideDropdown();
+            }
+        });
+
+        field.addEventListener('click', function (e) {
+            const x = e.target.closest('[data-remove-tag]');
+            if (!x) return;
+            const tag = x.closest('.tag-bubble').dataset.tag;
+            const sel = selectedTags().filter(t => t !== tag);
+            setSelected(sel);
+            renderDropdown(input.value);
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!field.contains(e.target)) hideDropdown();
+        });
+        field._tagDropdown.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    })();
+    </script>
 {% endblock %}
