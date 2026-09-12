@@ -50,6 +50,14 @@ final class TaskRunCommandTest extends TestCase
             $this->em,
             $this->createStub(LoggerInterface::class),
             $scheduler,
+            // Real instance with stubbed deps (the service is final; the
+            // conversation paths are never exercised by these command tests).
+            new \App\Service\ConversationService(
+                $this->em,
+                $this->createStub(\App\Repository\MessageRepository::class),
+                new TimezoneService('UTC'),
+                $this->createStub(LoggerInterface::class),
+            ),
         );
 
         return new TaskRunCommand($repo, $workflow, $this->em);

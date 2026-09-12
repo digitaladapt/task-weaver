@@ -84,6 +84,14 @@ class Step
     private ?array $result = null;
 
     /**
+     * The current execution's run id (docs/conversations-plan.md §4).
+     * Minted when the step is marked `running`; cleared on reset for the
+     * next run; retained on terminal step_* events for audit.
+     */
+    #[ORM\Column(type: Types::STRING, length: 36, nullable: true)]
+    private ?string $runId = null;
+
+    /**
      * @var Collection<int, Event>
      */
     #[ORM\OneToMany(mappedBy: 'step', targetEntity: Event::class, cascade: ['remove'], orphanRemoval: true)]
@@ -221,6 +229,16 @@ class Step
     /**
      * @return array<string, mixed>|null
      */
+    public function getRunId(): ?string
+    {
+        return $this->runId;
+    }
+
+    public function setRunId(?string $runId): void
+    {
+        $this->runId = $runId;
+    }
+
     public function getResult(): ?array
     {
         return $this->result;

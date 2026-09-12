@@ -17,6 +17,7 @@ use Symfony\Component\Uid\Uuid;
 #[ORM\Index(columns: ['step_id'], name: 'idx_event_step')]
 #[ORM\Index(columns: ['task_id'], name: 'idx_event_task')]
 #[ORM\Index(columns: ['worker_id'], name: 'idx_event_worker')]
+#[ORM\Index(columns: ['run_id'], name: 'idx_event_run')]
 class Event
 {
     // Event type discriminators (SPEC.md Decisions Log #2)
@@ -66,6 +67,15 @@ class Event
 
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private DateTimeImmutable $timestamp;
+
+    /**
+     * Groups one step execution (one run): the initial llm_call mints it,
+     * every subsequent tool_* and step_* event of that execution copies it
+     * (docs/conversations-plan.md §4). No worker change — controller-side
+     * audit grouping only.
+     */
+    #[ORM\Column(type: Types::STRING, length: 36, nullable: true)]
+    private ?string $runId = null;
 
     /**
      * @var Collection<int, ToolCall>
@@ -146,6 +156,16 @@ class Event
     public function setPayload(array $payload): void
     {
         $this->payload = $payload;
+    }
+
+    public function getRunId(): ?string
+    {
+        return $this->runId;
+    }
+
+    public function setRunId(?string $runId): void
+    {
+        $this->runId = $runId;
     }
 
     public function getTimestamp(): DateTimeImmutable

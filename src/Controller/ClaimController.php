@@ -32,6 +32,9 @@ final class ClaimController extends AbstractController
             return $this->json(['task' => null]);
         }
 
+        // (Reply-run claim → message `running` transition happens inside
+        // ClaimService::claimFor — claims are also made from tests/CLI.)
+
         return $this->json([
             'task' => [
                 'id' => $result['task']->getId()->toRfc4122(),

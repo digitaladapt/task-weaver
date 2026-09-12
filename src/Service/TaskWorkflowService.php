@@ -21,6 +21,8 @@ use Psr\Log\LoggerInterface;
 
 use function sprintf;
 
+use Symfony\Component\Uid\Uuid;
+
 /**
  * Central orchestration for task/step lifecycle on the controller:
  *   - marking steps running (stamps expires_at)
@@ -33,6 +35,7 @@ final class TaskWorkflowService
         private readonly EntityManagerInterface $em,
         private readonly LoggerInterface $logger,
         private readonly SchedulerService $scheduler,
+        private readonly ConversationService $conversations,
         private readonly int $stepTimeout = 600,
     ) {
     }
@@ -65,6 +68,7 @@ final class TaskWorkflowService
             $step->setFinishedAt(null);
             $step->setExpiresAt(null);
             $step->setResult(null);
+            $step->setRunId(null);
             $this->em->persist($step);
         }
 
@@ -99,6 +103,10 @@ final class TaskWorkflowService
         $step->setStatus(Step::STATUS_RUNNING);
         $step->setStartedAt(new DateTimeImmutable());
         $step->setExpiresAt((new DateTimeImmutable())->modify(sprintf('+%d seconds', $this->stepTimeout)));
+        // Mint the run id BEFORE the step_started event is logged (and before
+        // the first llm_call is registered) so EVERY event of this execution
+        // — including step_started — carries it (docs/conversations-plan.md §4).
+        $step->setRunId((string) Uuid::v4());
 
         $this->em->persist($step);
         $this->em->flush();
@@ -119,6 +127,7 @@ final class TaskWorkflowService
 
         $event = new Event($step, $step->getTask(), $worker, Event::TYPE_LLM_CALL);
         $event->setApiKey(KeyGenerator::generate());
+        $event->setRunId($step->getRunId());
         $this->em->persist($event);
         $this->em->flush();
 
@@ -167,6 +176,12 @@ final class TaskWorkflowService
         }
 
         $this->em->flush();
+
+        // A transient reply task reached a terminal state → materialize the
+        // reply and hard-delete the run (docs/conversations-plan.md §5.1/D10).
+        // Called here (not only from the controller) so every path — worker
+        // API, scheduler expiry, tests — gets the same cleanup.
+        $this->conversations->onStepTerminal($task, $step);
     }
 
     /**
@@ -243,6 +258,9 @@ final class TaskWorkflowService
 
         $this->em->flush();
         $this->logger->info('Step failed', ['step' => $step->getId()->toRfc4122(), 'reason' => $reason]);
+
+        // Reply-run failure → message failed + run hard-deleted (D10).
+        $this->conversations->onStepTerminal($task, $step, true, $reason);
     }
 
     /**
@@ -261,12 +279,16 @@ final class TaskWorkflowService
                 : $step->getEvents()->last()->getWorker();
 
             if ($worker instanceof Worker) {
+                // failStep() already flows the failure into onStepTerminal()
+                // for reply tasks (materialize failure + hard-delete).
                 $this->failStep($step, $worker, 'worker timeout: step expired at '.$step->getExpiresAt()?->format('c'));
             } else {
                 // No worker recorded — just mark failed and log an error event via a synthetic path.
                 $step->setStatus(Step::STATUS_FAILED);
                 $step->setFinishedAt(new DateTimeImmutable());
                 $this->em->persist($step);
+                // No-worker branch: still flow the failure into cleanup.
+                $this->conversations->onStepTerminal($step->getTask(), $step, true, 'worker timeout');
             }
         }
 
@@ -279,6 +301,7 @@ final class TaskWorkflowService
     {
         $event = new Event($step, $step->getTask(), $worker, $type);
         $event->setPayload($payload);
+        $event->setRunId($step->getRunId());
         $this->em->persist($event);
     }
 }
