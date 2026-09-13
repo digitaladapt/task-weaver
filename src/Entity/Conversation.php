@@ -57,6 +57,20 @@ class Conversation
     private ?DateTimeImmutable $archivedAt = null;
 
     /**
+     * Rolling compacted transcript. One column max — each successful
+     * compaction replaces the previous summary in full.
+     */
+    #[ORM\Column(type: Types::TEXT, nullable: true)]
+    private ?string $summary = null;
+
+    /**
+     * High-water mark for the summary: every message up to and including
+     * this one is covered by `summary`; only newer messages render raw.
+     */
+    #[ORM\Column(type: 'uuid', nullable: true)]
+    private ?Uuid $summaryThroughMessageId = null;
+
+    /**
      * @var Collection<int, Message>
      */
     #[ORM\OneToMany(mappedBy: 'conversation', targetEntity: Message::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
@@ -142,6 +156,31 @@ class Conversation
     public function isArchived(): bool
     {
         return null !== $this->archivedAt;
+    }
+
+    public function getSummary(): ?string
+    {
+        return $this->summary;
+    }
+
+    /**
+     * Replace the rolling summary and move its high-water mark. Passing
+     * null (compaction failed / superseded) clears the summary pair.
+     */
+    public function setSummary(?string $summary, ?Uuid $throughMessageId): void
+    {
+        $this->summary = $summary;
+        $this->summaryThroughMessageId = $throughMessageId;
+    }
+
+    public function getSummaryThroughMessageId(): ?Uuid
+    {
+        return $this->summaryThroughMessageId;
+    }
+
+    public function hasSummary(): bool
+    {
+        return null !== $this->summary;
     }
 
     /**

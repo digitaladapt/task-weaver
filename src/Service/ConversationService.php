@@ -13,12 +13,14 @@ use App\Entity\Task;
 use App\Entity\ToolCall;
 use App\Repository\MessageRepository;
 
+use function array_map;
 use function array_slice;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
 
+use function iconv_substr;
 use function in_array;
 use function is_array;
 use function is_string;
@@ -33,6 +35,10 @@ use Psr\Log\LoggerInterface;
 
 use function sprintf;
 use function strlen;
+
+use Symfony\Component\Uid\Uuid;
+use Throwable;
+
 use function trim;
 
 /**
@@ -46,6 +52,13 @@ use function trim;
  */
 final class ConversationService
 {
+    /**
+     * Compaction runs carry no tool tags: summarizing is a pure text
+     * transform needing no toolbox, and tagless steps are claimable by
+     * every worker (any worker can compact).
+     */
+    private const COMPACTION_TAGS = [];
+
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly MessageRepository $messages,
@@ -53,6 +66,8 @@ final class ConversationService
         private readonly LoggerInterface $logger,
         private readonly int $historyMessages = 20,
         private readonly int $historyChars = 8000,
+        private readonly int $compactionMessageThreshold = 15,
+        private readonly int $compactionCharThreshold = 6000,
     ) {
     }
 
@@ -137,11 +152,16 @@ final class ConversationService
     /**
      * Safety net: create reply runs for every conversation that has a pending
      * message but no live reply task (covers a crash between post and create).
+     * Also re-checks each live conversation for an overdue compaction (covers
+     * a crash between a materialized reply and its compaction trigger).
      * Called at claim time (pass 1) and after run completion.
      */
     public function ensureReplyRuns(): void
     {
         $repo = $this->em->getRepository(Conversation::class);
+        foreach ($repo->findAllActive() as $conversation) {
+            $this->maybeCompact($conversation);
+        }
         foreach ($repo->findWithPendingMessage() as $conversation) {
             $this->ensureReplyRun($conversation);
         }
@@ -181,6 +201,14 @@ final class ConversationService
      */
     public function onStepTerminal(Task $task, Step $step, bool $failed = false, string $reason = ''): void
     {
+        // A compaction run is also a transient conversation task; handle and
+        // clean it up (never flows into reply materialization).
+        if ($task->isCompactionTask()) {
+            $this->onCompactionTerminal($task, $step, $failed);
+
+            return;
+        }
+
         if (!$task->isReplyTask()) {
             return;
         }
@@ -191,6 +219,7 @@ final class ConversationService
             // Conversation gone; just remove the orphan run.
             $this->em->remove($task);
             $this->em->flush();
+            $this->em->clear(); // drop the deleted run's graph (see below)
 
             return;
         }
@@ -205,6 +234,7 @@ final class ConversationService
             // Nothing to attach the outcome to — sweep the orphan run.
             $this->em->remove($task);
             $this->em->flush();
+            $this->em->clear(); // drop the deleted run's graph (see below)
 
             return;
         }
@@ -230,31 +260,62 @@ final class ConversationService
         $this->em->flush();
 
         $this->logger->info('Reply materialized; transient run deleted', [
-            'conversation' => $conversation->getId()->toRfc4122(),
+            'conversation' => $conversationId->toRfc4122(),
             'failed' => $failed,
         ]);
+
+        // The run (step/events/tool_calls) is gone for good. Clear the
+        // UnitOfWork so subsequent flushes — the compaction check runs one —
+        // don't trip Doctrine's "new entities through a deleted association"
+        // guard on the just-removed run's lingering in-memory references.
+        $this->em->clear();
+
+        // Everything fetched before the clear is detached now — re-read the
+        // conversation before the post-materialization tail runs.
+        $conversation = $this->em->getRepository(Conversation::class)->find($conversationId);
+        if (null === $conversation) {
+            return; // conversation vanished concurrently — nothing left to do
+        }
+
+        // Reply landed ⇒ the transcript grew; compact it when it now
+        // crosses a threshold (no-op while a compaction is already live).
+        $this->maybeCompact($conversation);
 
         // Drive the next queued message (FIFO, one run at a time).
         $this->ensureReplyRun($conversation);
     }
 
     /**
-     * Sweep orphaned reply runs: terminal conversation tasks that survived a
-     * controller crash before materialization/cleanup. Idempotent.
+     * Sweep orphaned conversation runs (reply + compaction): terminal
+     * conversation tasks that survived a controller crash before
+     * materialization/cleanup. Idempotent.
      */
     public function sweepOrphanReplyRuns(): void
     {
-        $orphans = $this->em->createQueryBuilder()
-            ->select('t')
-            ->from(Task::class, 't')
-            ->where('t.conversationId IS NOT NULL')
-            ->andWhere('t.status IN (:terminal)')
-            ->setParameter('terminal', [Task::STATUS_COMPLETED, Task::STATUS_FAILED])
-            ->getQuery()
-            ->getResult();
+        $orphanIds = array_map(
+            static fn (Task $t): string => $t->getId()->toRfc4122(),
+            $this->em->createQueryBuilder()
+                ->select('t')
+                ->from(Task::class, 't')
+                ->where('t.conversationId IS NOT NULL OR t.compactionConversationId IS NOT NULL')
+                ->andWhere('t.status IN (:terminal)')
+                ->setParameter('terminal', [Task::STATUS_COMPLETED, Task::STATUS_FAILED])
+                ->getQuery()
+                ->getResult(),
+        );
 
-        foreach ($orphans as $task) {
-            $this->onStepTerminal($task, $task->getFinalStep() ?? $task->getSteps()->first(), Task::STATUS_FAILED === $task->getStatus());
+        foreach ($orphanIds as $taskId) {
+            // Re-read each iteration: materializing one run clears the
+            // UnitOfWork, detaching everything fetched before it.
+            $task = $this->em->getRepository(Task::class)->find($taskId);
+            if (null === $task) {
+                continue; // already swept (e.g. a concurrent tick)
+            }
+            $step = $task->getFinalStep() ?? $task->getSteps()->first();
+            if (!$step instanceof Step) {
+                continue; // the task has no step — nothing to materialize
+            }
+            $this->onStepTerminal($task, $step, Task::STATUS_FAILED === $task->getStatus());
         }
     }
 
@@ -281,6 +342,10 @@ final class ConversationService
     /**
      * Render the turn context the worker sees (docs/conversations-plan.md
      * §6.1). User/assistant content only — no thinking blocks, no tool traces.
+     *
+     * When the conversation carries a rolling summary, the older history is
+     * replaced by that summary and only messages newer than the summary's
+     * high-water mark are rendered raw (compaction).
      */
     public function renderContext(Conversation $conversation, Message $current): string
     {
@@ -289,13 +354,29 @@ final class ConversationService
         $lines = [];
         $lines[] = sprintf('Current date/time: %s (%s) timezone: %s', $now->format('Y-m-d H:i:s'), 'utc', $tz);
         $lines[] = '';
-        $lines[] = '## Conversation history';
 
+        $hasSummary = $conversation->hasSummary();
+        if ($hasSummary) {
+            $lines[] = '## Conversation summary (older history)';
+            $lines[] = (string) $conversation->getSummary();
+            $lines[] = '';
+        }
+        $lines[] = $hasSummary ? '## Recent messages' : '## Conversation history';
+
+        $seenThrough = !$hasSummary; // no summary ⇒ nothing to skip
         $history = [];
         $chars = 0;
         foreach ($conversation->getMessages() as $m) {
             if ($m->getId()->equals($current->getId())) {
                 break;
+            }
+            if (!$seenThrough) {
+                // Skip messages already folded into the summary.
+                if (null !== $conversation->getSummaryThroughMessageId()
+                    && $m->getId()->equals($conversation->getSummaryThroughMessageId())) {
+                    $seenThrough = true;
+                }
+                continue;
             }
             if (Message::ROLE_ASSISTANT === $m->getRole() && Message::STATUS_FAILED === $m->getStatus()) {
                 continue; // never feed failures back as context
@@ -479,5 +560,312 @@ final class ConversationService
         ]);
 
         return $task;
+    }
+
+    // ---- History compaction ----
+
+    /**
+     * Compact the transcript when it crosses a threshold. Creates a
+     * transient compaction run (same lifecycle as a reply run). Quietly
+     * returns — no second run — when one is already live for this
+     * conversation; the unique index on task.compaction_conversation_id
+     * is the backstop for that guarantee.
+     *
+     * Called after each materialized reply and on the claim-time safety net.
+     */
+    public function maybeCompact(Conversation $conversation): ?Task
+    {
+        // Work from the freshest read: callers can hand us a conversation
+        // that is detached (post em->clear()) or stale (fetched before the
+        // reply was materialized).
+        if (!$this->em->contains($conversation)) {
+            $conversation = $this->em->getRepository(Conversation::class)->find($conversation->getId());
+            if (null === $conversation) {
+                return null;
+            }
+        }
+        $this->em->refresh($conversation);
+
+        if (!$this->historyNeedsCompaction($conversation)) {
+            return null;
+        }
+
+        if ($this->compactionInFlight($conversation)) {
+            return null; // already being compacted — quietly dropped
+        }
+
+        try {
+            return $this->createCompactionRun($conversation);
+        } catch (Throwable $e) {
+            // Backstop: a racer won the unique index. Never let a compaction
+            // hiccup break the reply flow.
+            $this->logger->warning('Compaction run creation skipped', [
+                'exception' => $e::class,
+                'conversation' => $conversation->getId()->toRfc4122(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Terminal handling for a compaction run: store the summary, move the
+     * high-water mark, hard-delete the run.
+     *
+     * The mark stored is the run's OWN cutoff — the last message actually
+     * folded into its prompt, recorded at creation. The mark never moves
+     * backwards: a run whose cutoff sits behind the conversation's current
+     * mark is discarded (a fresher compaction won).
+     */
+    private function onCompactionTerminal(Task $task, Step $step, bool $failed): void
+    {
+        $conversationId = $task->getCompactionConversationId();
+        if (null === $conversationId) {
+            return;
+        }
+        $conversation = $this->em->getRepository(Conversation::class)->find($conversationId);
+        if (null === $conversation) {
+            // Conversation gone; just remove the orphan run.
+            $this->em->remove($task);
+            $this->em->flush();
+            $this->em->clear(); // drop the deleted run's graph (see below)
+
+            return;
+        }
+
+        $stored = false;
+        if (!$failed) {
+            $cutoffId = $task->getCompactionCutoffMessageId();
+            $summaryText = trim($this->assistantContent($step));
+
+            if (null !== $cutoffId && '' !== $summaryText
+                && $this->coversAtLeast($conversation, $cutoffId)) {
+                $conversation->setSummary($summaryText, $cutoffId);
+                $this->em->persist($conversation);
+                $stored = true;
+            }
+            // else: superseded or empty — discard, leave state for a later
+            // compaction (the threshold still holds, so it will retrigger).
+        }
+
+        $conversation->touch();
+
+        // Hard-delete the transient run — cascade removes step/events/toolcalls.
+        $this->em->remove($task);
+        $this->em->flush();
+
+        // Same hygiene as reply materialization: drop the deleted run's graph
+        // from the UnitOfWork so later flushes in the same request/loop don't
+        // stumble over its lingering in-memory references.
+        $this->em->clear();
+
+        $this->logger->info('Compaction run finished', [
+            'conversation' => $conversationId->toRfc4122(),
+            'failed' => $failed,
+            'stored' => $stored,
+        ]);
+    }
+
+    /**
+     * Does the history newer than the summary's high-water mark cross a
+     * compaction threshold, AND is the transcript settled (its last turn is
+     * a completed assistant reply)?
+     *
+     * The "settled" gate matters: directly after a user posts (turn ends in
+     * a queued user message) we do NOT compact — compacting now would fold
+     * the new question away moments before its own reply arrives. We only
+     * compact once the reply has landed and the thread is at rest. For the
+     * same reason a trailing queued/running message blocks compaction.
+     */
+    private function historyNeedsCompaction(Conversation $conversation): bool
+    {
+        $through = $conversation->getSummaryThroughMessageId();
+        $seen = null === $through;
+        $count = 0;
+        $chars = 0;
+        $last = null;
+        foreach ($conversation->getMessages() as $m) {
+            if (!$seen) {
+                if (null !== $through && $m->getId()->equals($through)) {
+                    $seen = true;
+                }
+                continue;
+            }
+            if (Message::ROLE_ASSISTANT === $m->getRole() && Message::STATUS_FAILED === $m->getStatus()) {
+                continue; // never folded (and never rendered) — ignore here too
+            }
+            ++$count;
+            $chars += strlen($m->getContent());
+            $last = $m;
+        }
+
+        // Only compact a thread that is at rest: its newest unfolded message
+        // must be a completed assistant reply (nothing queued/running).
+        if (!$last instanceof Message
+            || Message::STATUS_COMPLETED !== $last->getStatus()
+            || Message::ROLE_ASSISTANT !== $last->getRole()) {
+            return false;
+        }
+
+        return $count > $this->compactionMessageThreshold
+            || $chars > $this->compactionCharThreshold;
+    }
+
+    private function compactionInFlight(Conversation $conversation): bool
+    {
+        return null !== $this->em->getRepository(Task::class)
+            ->findOneBy(['compactionConversationId' => $conversation->getId()]);
+    }
+
+    /**
+     * Create the transient compaction run. One final step whose description
+     * asks the LLM to fold the unfolded transcript into a rolling summary;
+     * tagless so any worker can claim it (summarizing needs no toolbox).
+     * Returns null when nothing fits the prompt budget (try again later).
+     */
+    private function createCompactionRun(Conversation $conversation): ?Task
+    {
+        [$prompt, $cutoffId] = $this->renderCompactionPrompt($conversation);
+        if (null === $cutoffId) {
+            return null; // nothing foldable within the budget — try again later
+        }
+
+        $task = new Task('Compact '.$conversation->getName(), '');
+        $task->setStatus(Task::STATUS_READY);
+        $task->setPriority(10); // behind replies (100) and normal work
+        $task->setCompactionConversationId($conversation->getId());
+        $task->setCompactionCutoffMessageId($cutoffId);
+        $task->setTimezone($this->timezone->resolve());
+
+        $step = new Step('Compact', $prompt);
+        $step->setIsFinal(true);
+        $step->setSortOrder(0);
+        $step->setTags(self::COMPACTION_TAGS);
+        $task->addStep($step);
+
+        $this->em->persist($task);
+        $this->em->flush();
+
+        $this->logger->info('Transient compaction run created', [
+            'task' => $task->getId()->toRfc4122(),
+            'conversation' => $conversation->getId()->toRfc4122(),
+        ]);
+
+        return $task;
+    }
+
+    /**
+     * True when storing a summary through $cutoffId keeps or advances the
+     * conversation's high-water mark (message positions are compared in
+     * render order).
+     */
+    private function coversAtLeast(Conversation $conversation, Uuid $cutoffId): bool
+    {
+        $current = $conversation->getSummaryThroughMessageId();
+        if (null === $current) {
+            return true;
+        }
+
+        $cutoffPos = null;
+        $currentPos = null;
+        $pos = 0;
+        foreach ($conversation->getMessages() as $m) {
+            if ($m->getId()->equals($cutoffId)) {
+                $cutoffPos = $pos;
+            }
+            if ($m->getId()->equals($current)) {
+                $currentPos = $pos;
+            }
+            ++$pos;
+        }
+
+        if (null === $cutoffPos) {
+            return false; // cutoff message is gone — never claim its coverage
+        }
+
+        return null === $currentPos || $cutoffPos >= $currentPos;
+    }
+
+    /**
+     * Build the "compact this" prompt: the previous summary (folded forward)
+     * plus every message not yet covered by it, capped by the history budget.
+     * Returns the prompt and the cutoff — the last message actually folded
+     * (null when nothing fits, in which case no run should be created).
+     *
+     * @return array{0: string, 1: Uuid|null}
+     */
+    private function renderCompactionPrompt(Conversation $conversation): array
+    {
+        $lines = [];
+        $lines[] = 'You are condensing a chat transcript into a rolling summary.';
+        $lines[] = 'Summarize the conversation below into a compact brief that preserves all facts, decisions, open questions, and any state later turns depend on. Write plain running text (no role prefixes). Output ONLY the summary.';
+        if ($conversation->hasSummary()) {
+            $lines[] = 'A previous summary is included — merge it forward; your output fully replaces it.';
+        }
+        $lines[] = '';
+        $lines[] = '## Transcript';
+
+        if ($conversation->hasSummary()) {
+            $lines[] = '### Summary so far';
+            $lines[] = (string) $conversation->getSummary();
+            $lines[] = '';
+        }
+
+        $through = $conversation->getSummaryThroughMessageId();
+        $seen = null === $through; // no summary ⇒ fold from the very start
+        $entries = [];
+        $chars = 0;
+        $cutoff = null;
+        foreach ($conversation->getMessages() as $m) {
+            if (!$seen) {
+                if (null !== $through && $m->getId()->equals($through)) {
+                    $seen = true;
+                }
+                continue; // already folded into the previous summary
+            }
+            if (Message::ROLE_ASSISTANT === $m->getRole() && Message::STATUS_FAILED === $m->getStatus()) {
+                continue;
+            }
+            $entry = sprintf('%s: %s', $m->getRole(), $m->getContent());
+            if (strlen($entry) + $chars > $this->historyChars) {
+                if ([] !== $entries) {
+                    break; // fold a prefix — the rest stays raw for the next pass
+                }
+                // The first unfolded entry alone blows the budget (a giant
+                // paste). Fold a truncated form rather than stalling
+                // compaction forever — otherwise the summary could never
+                // advance past it.
+                $entry = $this->truncateEntry($entry, $this->historyChars);
+            }
+            $entries[] = $entry;
+            $chars += strlen($entry);
+            $cutoff = $m;
+        }
+        foreach ($entries as $entry) {
+            $lines[] = $entry;
+        }
+
+        return [implode("\n", $lines), $cutoff?->getId()];
+    }
+
+    /**
+     * Truncate a prompt entry to a byte limit at a clean character boundary
+     * (never splitting a multibyte char), with an explicit marker so the
+     * summarizer knows the entry is partial.
+     */
+    private function truncateEntry(string $entry, int $limit): string
+    {
+        if (strlen($entry) <= $limit) {
+            return $entry;
+        }
+
+        $marker = ' …[truncated]';
+        $slice = iconv_substr($entry, 0, max(0, $limit - strlen($marker)), 'UTF-8');
+        if (false === $slice) {
+            $slice = substr($entry, 0, max(0, $limit - strlen($marker)));
+        }
+
+        return $slice.$marker;
     }
 }

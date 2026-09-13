@@ -9,6 +9,7 @@ use App\Entity\Step;
 use App\Entity\Task;
 use App\Entity\Worker;
 
+use function array_map;
 use function count;
 
 use DateTimeImmutable;
@@ -271,9 +272,19 @@ final class TaskWorkflowService
     public function expireStaleSteps(): void
     {
         $now = new DateTimeImmutable();
-        $stale = $this->em->getRepository(Step::class)->findStaleRunning($now);
+        $staleIds = array_map(
+            static fn (Step $s): string => $s->getId()->toRfc4122(),
+            $this->em->getRepository(Step::class)->findStaleRunning($now),
+        );
 
-        foreach ($stale as $step) {
+        foreach ($staleIds as $stepId) {
+            // Re-read each iteration: failing a reply step hard-deletes its
+            // run and clears the UnitOfWork, detaching earlier fetches.
+            $step = $this->em->getRepository(Step::class)->find($stepId);
+            if (null === $step) {
+                continue; // already cleaned up (conversation run deleted)
+            }
+
             $worker = $step->getEvents()->isEmpty()
                 ? null
                 : $step->getEvents()->last()->getWorker();
@@ -283,16 +294,19 @@ final class TaskWorkflowService
                 // for reply tasks (materialize failure + hard-delete).
                 $this->failStep($step, $worker, 'worker timeout: step expired at '.$step->getExpiresAt()?->format('c'));
             } else {
-                // No worker recorded — just mark failed and log an error event via a synthetic path.
+                // No worker recorded — mark it failed directly; the failure
+                // still flows into cleanup below. Flush before that cleanup:
+                // it may clear the UnitOfWork, which would drop unflushed
+                // changes to otherwise-unrelated steps.
                 $step->setStatus(Step::STATUS_FAILED);
                 $step->setFinishedAt(new DateTimeImmutable());
                 $this->em->persist($step);
-                // No-worker branch: still flow the failure into cleanup.
+                $this->em->flush();
                 $this->conversations->onStepTerminal($step->getTask(), $step, true, 'worker timeout');
             }
         }
 
-        if (count($stale) > 0) {
+        if (count($staleIds) > 0) {
             $this->em->flush();
         }
     }
