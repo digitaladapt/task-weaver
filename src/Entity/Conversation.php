@@ -57,6 +57,15 @@ class Conversation
     private ?DateTimeImmutable $archivedAt = null;
 
     /**
+     * Soft-delete marker. When set, the conversation is hidden from the
+     * admin UI and excluded from the reply-run safety net, but it and its
+     * messages / tool logs are kept for history preservation — the same
+     * policy as task.deleted_at (SPEC.md → Soft Delete).
+     */
+    #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?DateTimeImmutable $deletedAt = null;
+
+    /**
      * Rolling compacted transcript. One column max — each successful
      * compaction replaces the previous summary in full.
      */
@@ -147,7 +156,7 @@ class Conversation
         $this->touch();
     }
 
-    public function restore(): void
+    public function unarchive(): void
     {
         $this->archivedAt = null;
         $this->touch();
@@ -156,6 +165,28 @@ class Conversation
     public function isArchived(): bool
     {
         return null !== $this->archivedAt;
+    }
+
+    public function getDeletedAt(): ?DateTimeImmutable
+    {
+        return $this->deletedAt;
+    }
+
+    public function isDeleted(): bool
+    {
+        return null !== $this->deletedAt;
+    }
+
+    public function softDelete(): void
+    {
+        $this->deletedAt = new DateTimeImmutable();
+        $this->touch();
+    }
+
+    public function restore(): void
+    {
+        $this->deletedAt = null;
+        $this->touch();
     }
 
     public function getSummary(): ?string

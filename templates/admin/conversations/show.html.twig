@@ -92,10 +92,25 @@
         </form>
         <p class="muted" style="font-size:12px; margin-top:8px;">Replies are answered one at a time (FIFO). While a reply is being worked on you’ll see it as “waiting for worker”.</p>
     </div>
+
+    <div class="delete-zone">
+        <form method="post" action="{{ path('app_conversation_delete', {id: conversation.id}) }}" class="inline" onsubmit="return confirm('Delete this conversation?\n\nIt will be hidden, but the thread and its tool logs are kept.');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token('admin') }}">
+            <button type="submit" class="btn btn-danger">Delete Conversation</button>
+        </form>
+    </div>
 {% endblock %}
 
 {% block stylesheets %}
     <style>
+        .delete-zone {
+            border-top: 1px solid var(--border);
+            margin-top: 8px;
+            padding-top: 20px;
+            text-align: center;
+        }
+        .inline { display: inline; }
+
         .field { margin-bottom: 12px; }
         .field label {
             display: block;

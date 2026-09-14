@@ -21,6 +21,9 @@ use Doctrine\ORM\EntityManagerInterface;
 use function explode;
 
 use LogicException;
+
+use function sprintf;
+
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -149,10 +152,31 @@ final class ConversationController extends AbstractController
         return $this->redirectToRoute('app_conversation_show', ['id' => $conversation->getId()->toRfc4122()]);
     }
 
+    #[Route('/{id}/delete', name: 'app_conversation_delete', methods: ['POST'], requirements: ['id' => '[0-9a-fA-F-]{36}'])]
+    public function delete(ConversationRepository $repo, string $id): Response
+    {
+        $conversation = $repo->find(Uuid::fromString($id)->toRfc4122());
+        if (!$conversation instanceof Conversation || $conversation->isDeleted()) {
+            throw $this->createNotFoundException('Conversation not found');
+        }
+
+        // Soft delete: hide from view and drop out of the reply-run safety
+        // net, but keep the conversation and its messages / tool logs for
+        // history preservation (same policy as task delete).
+        $conversation->softDelete();
+        $this->em->flush();
+        $this->addFlash('success', sprintf('Conversation "%s" deleted.', $conversation->getName()));
+
+        return $this->redirectToRoute('app_conversations');
+    }
+
     private function findConversation(ConversationRepository $repo, string $id): Conversation
     {
         $conversation = $repo->find(Uuid::fromString($id)->toRfc4122());
-        if (!$conversation instanceof Conversation || $conversation->isArchived()) {
+        if (!$conversation instanceof Conversation
+            || $conversation->isArchived()
+            || $conversation->isDeleted()
+        ) {
             throw $this->createNotFoundException('Conversation not found');
         }
 
