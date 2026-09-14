@@ -90,6 +90,24 @@ class Task
     private ?Uuid $conversationId = null;
 
     /**
+     * Non-null ⇒ this is a transient COMPACTION task for that conversation.
+     * Unique ⇒ at most one live compaction run per conversation at any time
+     * (the unique index doubles as the dedup guard — a second compaction is
+     * quietly dropped). Hard-deleted after the summary is stored, same
+     * lifecycle as a reply task (D10).
+     */
+    #[ORM\Column(type: 'uuid', nullable: true, unique: true)]
+    private ?Uuid $compactionConversationId = null;
+
+    /**
+     * The last message folded into this compaction run's prompt — the run's
+     * intended high-water mark, recorded at creation so the stored summary
+     * can never claim more coverage than it actually summarized.
+     */
+    #[ORM\Column(type: 'uuid', nullable: true)]
+    private ?Uuid $compactionCutoffMessageId = null;
+
+    /**
      * @var Collection<int, Step>
      */
     #[ORM\OneToMany(mappedBy: 'task', targetEntity: Step::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
@@ -296,6 +314,31 @@ class Task
     public function isReplyTask(): bool
     {
         return null !== $this->conversationId;
+    }
+
+    public function getCompactionConversationId(): ?Uuid
+    {
+        return $this->compactionConversationId;
+    }
+
+    public function setCompactionConversationId(?Uuid $compactionConversationId): void
+    {
+        $this->compactionConversationId = $compactionConversationId;
+    }
+
+    public function isCompactionTask(): bool
+    {
+        return null !== $this->compactionConversationId;
+    }
+
+    public function getCompactionCutoffMessageId(): ?Uuid
+    {
+        return $this->compactionCutoffMessageId;
+    }
+
+    public function setCompactionCutoffMessageId(?Uuid $compactionCutoffMessageId): void
+    {
+        $this->compactionCutoffMessageId = $compactionCutoffMessageId;
     }
 
     public function getFinalStep(): ?Step

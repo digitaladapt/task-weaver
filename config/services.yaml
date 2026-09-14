@@ -26,6 +26,16 @@ parameters:
     # Deployment-wide scheduling timezone; empty falls back to the system default.
     env(TASKWEAVER_TIMEZONE): ''
 
+    # Chat reply context window (per-turn history budget).
+    env(TASKWEAVER_HISTORY_MESSAGES): '20'
+    env(TASKWEAVER_HISTORY_CHARS): '8000'
+    # Auto-compaction: a conversation compacts its transcript into a rolling
+    # summary once the history newer than the summary's high-water mark has
+    # more than this many completed turns, or more than this many chars
+    # (whichever trips first; both env-tunable).
+    env(TASKWEAVER_COMPACTION_MESSAGE_THRESHOLD): '15'
+    env(TASKWEAVER_COMPACTION_CHAR_THRESHOLD): '6000'
+
     # LLM proxy (keyed/external providers). The controller holds the key;
     # workers authenticate with their Tier-1 key. Only active when the key
     # is set. The upstream URL defaults to TASKWEAVER_LLM_URL + /chat/completions.
@@ -58,6 +68,14 @@ services:
     App\MCP\McpClientRegistry:
         arguments:
             $clients: !tagged_iterator app.mcp_client
+
+    # Conversations: reply-context budget + auto-compaction thresholds.
+    App\Service\ConversationService:
+        arguments:
+            $historyMessages: '%env(int:TASKWEAVER_HISTORY_MESSAGES)%'
+            $historyChars: '%env(int:TASKWEAVER_HISTORY_CHARS)%'
+            $compactionMessageThreshold: '%env(int:TASKWEAVER_COMPACTION_MESSAGE_THRESHOLD)%'
+            $compactionCharThreshold: '%env(int:TASKWEAVER_COMPACTION_CHAR_THRESHOLD)%'
 
     # Controller-issued worker config values.
     App\Service\ProvisionService:

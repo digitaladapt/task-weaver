@@ -30,6 +30,7 @@ class TaskRepository extends ServiceEntityRepository
             ->where('t.status = :ready')
             ->andWhere('t.deletedAt IS NULL')
             ->andWhere('t.conversationId IS NULL')
+            ->andWhere('t.compactionConversationId IS NULL')
             ->setParameter('ready', Task::STATUS_READY)
             ->orderBy('t.priority', 'DESC')
             ->addOrderBy('t.createdAt', 'ASC')
@@ -47,6 +48,7 @@ class TaskRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('t')
             ->where('t.deletedAt IS NULL')
             ->andWhere('t.conversationId IS NULL')
+            ->andWhere('t.compactionConversationId IS NULL')
             ->orderBy('t.createdAt', 'DESC')
             ->getQuery()
             ->getResult();
@@ -61,6 +63,7 @@ class TaskRepository extends ServiceEntityRepository
             ->select('COUNT(t.id)')
             ->where('t.deletedAt IS NULL')
             ->andWhere('t.conversationId IS NULL')
+            ->andWhere('t.compactionConversationId IS NULL')
             ->getQuery()
             ->getSingleScalarResult();
     }
@@ -75,6 +78,7 @@ class TaskRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('t')
             ->where('t.deletedAt IS NULL')
             ->andWhere('t.conversationId IS NULL')
+            ->andWhere('t.compactionConversationId IS NULL')
             ->orderBy('t.createdAt', 'DESC')
             ->setMaxResults($limit)
             ->getQuery()
