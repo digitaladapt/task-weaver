@@ -37,6 +37,12 @@
                             </div>
                         </details>
                     {% endif %}
+                    {% if message.error %}
+                        <details class="msg-error">
+                            <summary class="muted" style="cursor:pointer; color:var(--red);">error details</summary>
+                            <pre class="mono" style="margin-top:6px; background:var(--bg); padding:8px; border-radius:4px; overflow:auto; font-size:11px; white-space:pre-wrap;">{{ message.error }}</pre>
+                        </details>
+                    {% endif %}
                     {% if message.role == 'assistant' and message.toolLogs|length > 0 %}
                         <details class="msg-tool-log">
                             <summary class="muted" style="cursor:pointer;">tool log ({{ message.toolLogs|length }})</summary>

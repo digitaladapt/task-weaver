@@ -182,4 +182,39 @@ final class ConversationComposerUiTest extends WebTestCase
         ]);
         self::assertResponseStatusCodeSame(404);
     }
+
+    public function testFailedMessageShowsErrorDetailsExpandableSection(): void
+    {
+        $this->logIn();
+        $em = $this->entityManager();
+
+        $conversation = new Conversation('Error chat');
+        $em->persist($conversation);
+        $em->flush();
+
+        $this->addMessage($conversation, Message::ROLE_USER, 'Hello there');
+        sleep(1);
+        $failed = new Message($conversation, Message::ROLE_ASSISTANT, '');
+        $failed->markFailed('LLM upstream timeout after 30s (attempt 3/3)');
+        $conversation->addMessage($failed);
+        $em->persist($failed);
+        $em->flush();
+
+        $crawler = $this->client->request('GET', '/conversations/'.$conversation->getId());
+        self::assertResponseIsSuccessful();
+
+        // The failure reason renders in a collapsible section on the failed
+        // message bubble — and only on that bubble.
+        $error = $crawler->filter('.msg-bubble.assistant.failed details.msg-error');
+        self::assertCount(1, $error);
+        self::assertSame('error details', trim($error->filter('summary')->text()));
+        self::assertStringContainsString('LLM upstream timeout after 30s (attempt 3/3)', $error->filter('pre')->text());
+
+        // Successful messages get no error section at all.
+        self::assertCount(0, $crawler->filter('.msg-bubble.user details.msg-error'));
+        self::assertSame('Hello there', trim($crawler->filter('.msg-bubble.user .msg-content')->text()));
+
+        // The failed message is still not rendered as a form (read-only display).
+        self::assertCount(0, $crawler->filter('.msg-bubble.assistant.failed form'));
+    }
 }
