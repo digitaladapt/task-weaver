@@ -19,7 +19,8 @@ class ConversationRepository extends ServiceEntityRepository
     }
 
     /**
-     * All non-archived conversations, most recently active first.
+     * All live conversations (neither archived nor soft-deleted), most
+     * recently active first.
      *
      * @return Conversation[]
      */
@@ -27,6 +28,7 @@ class ConversationRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('c')
             ->where('c.archivedAt IS NULL')
+            ->andWhere('c.deletedAt IS NULL')
             ->orderBy('c.updatedAt', 'DESC')
             ->getQuery()
             ->getResult();
@@ -42,7 +44,8 @@ class ConversationRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('c')
             ->join('c.messages', 'm')
-            ->where('m.role = :role')
+            ->where('c.deletedAt IS NULL')
+            ->andWhere('m.role = :role')
             ->andWhere('m.status IN (:statuses)')
             ->setParameter('role', 'user')
             ->setParameter('statuses', ['queued', 'running'])
