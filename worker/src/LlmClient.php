@@ -62,6 +62,8 @@ final class LlmClient
 {
     private readonly HttpClientInterface $http;
 
+    private string $model;
+
     private int $retriesLeft;
 
     private int $backoffBaseMs = 500;
@@ -80,12 +82,13 @@ final class LlmClient
      */
     public function __construct(
         private readonly string $baseUrl,
-        private readonly string $model = 'Qwen3.5-4B',
+        string $model = 'Qwen3.5-4B',
         private readonly ?string $bearerToken = null,
         array $options = [],
         ?HttpClientInterface $http = null,
     ) {
         $this->http = $http ?? HttpClient::create(['timeout' => 300]);
+        $this->model = '' !== $model ? $model : 'Qwen3.5-4B';
         $this->retriesLeft = max(1, (int) ($options['retries'] ?? 3));
         $this->backoffBaseMs = max(100, (int) ($options['backoff_base_ms'] ?? 500));
         // Proxy channel: the controller-issued URL is ALREADY the full
@@ -93,6 +96,18 @@ final class LlmClient
         // suffix). Direct channel: the URL is a base (e.g. .../v1) and the
         // client appends /chat/completions.
         $this->fullEndpoint = (bool) ($options['full_endpoint'] ?? false);
+    }
+
+    /**
+     * Per-step model selection (docs/model-selection-plan.md §5): switch the
+     * model this client sends in every chat payload. The client (connection,
+     * auth, budget) is reused — only the model field changes.
+     */
+    public function setModel(string $model): void
+    {
+        if ('' !== $model) {
+            $this->model = $model;
+        }
     }
 
     /**

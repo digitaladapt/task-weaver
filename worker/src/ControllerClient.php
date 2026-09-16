@@ -117,11 +117,20 @@ final class ControllerClient
 
     /**
      * PATCH /api/worker/step/{taskId}/{stepId}/status — Tier-1.
+     *
+     * The optional $model (per-step selection or the worker's resolved
+     * default) rides along so the controller records it on the step_started
+     * event payload (provenance, M5b).
      */
-    public function markRunning(string $taskId, string $stepId): array
+    public function markRunning(string $taskId, string $stepId, ?string $model = null): array
     {
+        $json = ['status' => 'running'];
+        if (null !== $model && '' !== $model) {
+            $json['model'] = $model;
+        }
+
         return $this->request('PATCH', sprintf('/api/worker/step/%s/%s/status', urlencode($taskId), urlencode($stepId)), [
-            'json' => ['status' => 'running'],
+            'json' => $json,
         ]);
     }
 
