@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\Entity\Step;
 use App\Entity\Task;
 use App\Repository\TaskRepository;
+use App\Service\ModelCatalogService;
 use App\Service\ScheduleCronService;
 use App\Service\SchedulerService;
 use App\Service\TagService;
@@ -24,6 +25,7 @@ use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
 
 use function explode;
+use function in_array;
 use function is_array;
 
 use LogicException;
@@ -61,7 +63,33 @@ final class TaskController extends AbstractController
         private readonly ScheduleCronService $schedule,
         private readonly TimezoneService $timezone,
         private readonly SchedulerService $scheduler,
+        private readonly ModelCatalogService $models,
     ) {
+    }
+
+    /**
+     * Per-form-index unknown-model warnings (M6 soft validation): filled by
+     * applyForm, rendered as a non-blocking note above the field.
+     *
+     * @var array<int, string>
+     */
+    private array $unknownStepModels = [];
+
+    /**
+     * @var string[]|null lazily-populated cached live model list
+     */
+    private ?array $knownModels = null;
+
+    /**
+     * @return string[]
+     */
+    private function knownModels(): array
+    {
+        if (null === $this->knownModels) {
+            $this->knownModels = $this->models->list()['models'];
+        }
+
+        return $this->knownModels;
     }
 
     #[Route('', name: 'app_tasks', methods: ['GET'])]
@@ -103,6 +131,9 @@ final class TaskController extends AbstractController
             'errors' => $errors,
             'is_new' => true,
             'schedule' => $this->schedule->describe($task->getSchedule()),
+            'known_models' => $this->knownModels(),
+            'default_model' => $this->models->list()['default'],
+            'unknown_step_models' => $this->unknownStepModels,
         ]);
     }
 
@@ -135,6 +166,9 @@ final class TaskController extends AbstractController
             'errors' => $errors,
             'is_new' => false,
             'schedule' => $this->schedule->describe($task->getSchedule()),
+            'known_models' => $this->knownModels(),
+            'default_model' => $this->models->list()['default'],
+            'unknown_step_models' => $this->unknownStepModels,
         ]);
     }
 
@@ -257,6 +291,17 @@ final class TaskController extends AbstractController
             $tagString = (string) ($raw['tags'][$idx] ?? '');
             $tagList = array_values(array_filter(array_map('trim', explode(',', $tagString))));
             $step->setTags($tagList);
+
+            // Per-step model override (nullable; empty → default).
+            $step->setModel(trim((string) ($raw['model'][$idx] ?? '')));
+
+            // Soft warning (M6): the value isn't in the cached live list —
+            // keep it (it may be valid tomorrow, or on another worker) but
+            // surface it to the operator above the field.
+            $modelValue = $step->getModel();
+            if (null !== $modelValue && !in_array($modelValue, $this->knownModels(), true)) {
+                $this->unknownStepModels[$idx] = $modelValue;
+            }
 
             $step->setSortOrder($order);
             // The final step is always the last block in the editor.

@@ -29,6 +29,9 @@
                         <span class="muted" style="font-size:11px;">{{ message.createdAt|date('Y-m-d H:i') }}</span>
                     </div>
                     <div class="msg-content" style="white-space:pre-wrap;">{{ message.content }}</div>
+                    {% if message.model %}
+                        <div class="muted" style="font-size:11px; margin-top:4px;">model: {{ message.model }}</div>
+                    {% endif %}
                     {% if message.tags is not empty %}
                         <details class="msg-tags">
                             <summary class="muted" style="cursor:pointer;">tags</summary>
@@ -94,6 +97,15 @@
                     <div class="tag-dropdown" data-tag-dropdown hidden></div>
                 </div>
             </div>
+            <div class="field">
+                <label for="reply-model">Model <span class="muted">(LLM for this reply)</span></label>
+                <input type="text" id="reply-model" name="model" list="reply-models" value="{{ default_model_value }}" placeholder="Default ({{ default_model }})" class="input" autocomplete="off" spellcheck="false">
+            </div>
+            <datalist id="reply-models">
+                {% for model in known_models %}
+                    <option value="{{ model }}"></option>
+                {% endfor %}
+            </datalist>
             <button type="submit" class="btn btn-primary">Send</button>
         </form>
         <p class="muted" style="font-size:12px; margin-top:8px;">Replies are answered one at a time (FIFO). While a reply is being worked on you’ll see it as “waiting for worker”.</p>

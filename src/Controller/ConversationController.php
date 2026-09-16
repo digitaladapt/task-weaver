@@ -9,6 +9,7 @@ use App\Entity\Event;
 use App\Repository\ConversationRepository;
 use App\Repository\EventRepository;
 use App\Service\ConversationService;
+use App\Service\ModelCatalogService;
 use App\Service\TagService;
 
 use function array_filter;
@@ -41,6 +42,7 @@ final class ConversationController extends AbstractController
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly ConversationService $conversations,
+        private readonly ModelCatalogService $models,
     ) {
     }
 
@@ -84,10 +86,24 @@ final class ConversationController extends AbstractController
     ): Response {
         $conversation = $this->findConversation($repo, $id);
 
+        // Composer prefill for the model field: the model of the most recent
+        // message that carries one ("the model last used in the thread"),
+        // else empty (deployment default).
+        $defaultModelValue = null;
+        foreach (array_reverse($conversation->getMessages()->toArray()) as $msg) {
+            if (null !== $msg->getModel()) {
+                $defaultModelValue = $msg->getModel();
+                break;
+            }
+        }
+
         return $this->render('admin/conversations/show.html.twig', [
             'conversation' => $conversation,
             'all_tags' => $tags->allKnown(),
             'default_tags' => $this->defaultTags($conversation),
+            'known_models' => $this->models->list()['models'],
+            'default_model' => $this->models->list()['default'],
+            'default_model_value' => $defaultModelValue,
         ]);
     }
 
@@ -126,7 +142,8 @@ final class ConversationController extends AbstractController
         }
 
         $tags = $this->parseTags((string) $request->request->get('tags', ''));
-        $this->conversations->postMessage($conversation, $content, $tags);
+        $model = trim((string) $request->request->get('model', ''));
+        $this->conversations->postMessage($conversation, $content, $tags, '' !== $model ? $model : null);
         $this->addFlash('success', 'Message queued for a worker.');
 
         return $this->redirectToRoute('app_conversation_show', ['id' => $id]);

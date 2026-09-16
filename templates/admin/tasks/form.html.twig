@@ -2,7 +2,7 @@
 
 {% block title %}{{ is_new ? 'New task' : 'Edit task' }} · TaskWeaver{% endblock %}
 
-{% macro step_row(step, n, is_new, can_delete) %}
+{% macro step_row(step, n, is_new, can_delete, default_model, unknown_step_models, step_index) %}
     <div class="step-editor-row" data-step-row>
         <div class="step-editor-head">
             <span class="step-editor-index">Step {{ n }}</span>
@@ -17,6 +17,13 @@
         <div class="field">
             <label for="step-name-{{ step.id }}">Name</label>
             <input type="text" id="step-name-{{ step.id }}" name="steps[name][]" value="{{ step.name }}" placeholder="e.g. Fetch weather" class="input">
+        </div>
+        <div class="field">
+            <label for="step-model-{{ step.id }}">Model <span class="muted">(LLM for this step)</span></label>
+            {% if unknown_step_models[step_index] is defined %}
+                <div style="padding:6px 10px; border-radius:6px; margin-bottom:6px; font-size:12px; background:rgba(240,180,41,.12); border:1px solid var(--yellow, #f0b429); color:var(--yellow, #f0b429);">“{{ unknown_step_models[step_index] }}” isn’t in the current model list — saved anyway; it must exist on the worker’s LLM endpoint to run.</div>
+            {% endif %}
+            <input type="text" id="step-model-{{ step.id }}" name="steps[model][]" list="step-models" value="{{ step.model }}" placeholder="Default ({{ default_model }})" class="input" autocomplete="off" spellcheck="false">
         </div>
         <div class="field">
             <label for="step-desc-{{ step.id }}">Instructions</label>
@@ -164,7 +171,7 @@
             <div id="step-list">
                 {% set total = task.steps|length %}
                 {% for step in task.steps %}
-                    {{ forms.step_row(step, loop.index, is_new, not loop.last) }}
+                    {{ forms.step_row(step, loop.index, is_new, not loop.last, default_model, unknown_step_models, loop.index0) }}
                 {% endfor %}
             </div>
             <div class="muted" style="font-size:12px; margin-top:8px;">
@@ -183,6 +190,13 @@
         </div>
     {% endif %}
 
+    {# Model datalist shared by every step row (macro + JS template). #}
+    <datalist id="step-models">
+        {% for model in known_models %}
+            <option value="{{ model }}"></option>
+        {% endfor %}
+    </datalist>
+
     {# Blank template for JS-added steps — mirrors the macro markup. #}
     <template id="step-row-template">
         <div class="step-editor-row" data-step-row>
@@ -193,6 +207,10 @@
             <div class="field">
                 <label>Name</label>
                 <input type="text" name="steps[name][]" placeholder="e.g. Fetch weather" class="input">
+            </div>
+            <div class="field">
+                <label>Model <span class="muted">(LLM for this step)</span></label>
+                <input type="text" name="steps[model][]" list="step-models" placeholder="Default ({{ default_model }})" class="input" autocomplete="off" spellcheck="false">
             </div>
             <div class="field">
                 <label>Instructions</label>
