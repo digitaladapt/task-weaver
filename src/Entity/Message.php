@@ -69,6 +69,15 @@ class Message
     #[ORM\Column(type: Types::JSON)]
     private array $tags = [];
 
+    /**
+     * Optional per-message LLM model override (docs/model-selection-plan.md
+     * §3): a user message carries the model its reply should use; an
+     * assistant message records the model that actually ran (provenance).
+     * NULL = deployment default.
+     */
+    #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
+    private ?string $model = null;
+
     #[ORM\Column(type: Types::STRING, length: 16)]
     private string $status = self::STATUS_QUEUED;
 
@@ -167,6 +176,19 @@ class Message
     public function setTags(array $tags): void
     {
         $this->tags = array_values(array_unique(array_map('trim', $tags)));
+    }
+
+    public function getModel(): ?string
+    {
+        return $this->model;
+    }
+
+    public function setModel(?string $model): void
+    {
+        $this->model = null !== $model ? trim($model) : null;
+        if ('' === $this->model) {
+            $this->model = null;
+        }
     }
 
     public function getStatus(): string
