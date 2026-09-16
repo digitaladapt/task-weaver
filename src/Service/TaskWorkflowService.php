@@ -91,9 +91,12 @@ final class TaskWorkflowService
     }
 
     /**
-     * @return array<string, mixed>|null the persisted step key (or null when generated here)
+     * Mark a pending step running. The optional worker-reported $model is
+     * the model that will actually execute this step (per-step selection or
+     * the worker's resolved default) — recorded on the step_started event
+     * payload for provenance (M5b; docs/model-selection-plan.md §5).
      */
-    public function markStepRunning(Step $step, Worker $worker): void
+    public function markStepRunning(Step $step, Worker $worker, ?string $model = null): void
     {
         if (Step::STATUS_PENDING !== $step->getStatus()) {
             // Only a pending step may transition to running. A stale-running
@@ -112,7 +115,11 @@ final class TaskWorkflowService
         $this->em->persist($step);
         $this->em->flush();
 
-        $this->log(Event::TYPE_STEP_STARTED, $step, $worker, ['expires_at' => $step->getExpiresAt()?->format('c')]);
+        $payload = ['expires_at' => $step->getExpiresAt()?->format('c')];
+        if (null !== $model && '' !== $model) {
+            $payload['model'] = $model;
+        }
+        $this->log(Event::TYPE_STEP_STARTED, $step, $worker, $payload);
         $this->logger->info('Step started', ['step' => $step->getId()->toRfc4122()]);
     }
 

@@ -36,6 +36,15 @@ parameters:
     env(TASKWEAVER_COMPACTION_MESSAGE_THRESHOLD): '15'
     env(TASKWEAVER_COMPACTION_CHAR_THRESHOLD): '6000'
 
+    # The deployment-wide default model (TASKWEAVER_LLM_MODEL): issued to
+    # workers at provision time and used to resolve step.model = NULL.
+    llm_model: '%env(TASKWEAVER_LLM_MODEL)%'
+
+    # Model discovery: the controller proxies GET {llm_url}/models for the
+    # admin UI datalists and the worker discovery route. Normalized result
+    # cached in-process for this many seconds (0 = always fetch).
+    env(TASKWEAVER_LLM_MODELS_CACHE_TTL): '300'
+
     # LLM proxy (keyed/external providers). The controller holds the key;
     # workers authenticate with their Tier-1 key. Only active when the key
     # is set. The upstream URL defaults to TASKWEAVER_LLM_URL + /chat/completions.
@@ -68,6 +77,18 @@ services:
     App\MCP\McpClientRegistry:
         arguments:
             $clients: !tagged_iterator app.mcp_client
+
+    # Model discovery: scalar config from env (autowiring can't provide it).
+    App\Service\ModelCatalogService:
+        arguments:
+            $llmUrl: '%env(TASKWEAVER_LLM_URL)%'
+            $defaultModel: '%env(TASKWEAVER_LLM_MODEL)%'
+            $cacheTtl: '%env(int:TASKWEAVER_LLM_MODELS_CACHE_TTL)%'
+
+    # Claim responses resolve step.model to override-or-default (M4).
+    App\Controller\ClaimController:
+        arguments:
+            $defaultModel: '%env(TASKWEAVER_LLM_MODEL)%'
 
     # Conversations: reply-context budget + auto-compaction thresholds.
     App\Service\ConversationService:

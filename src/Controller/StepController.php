@@ -46,10 +46,13 @@ final class StepController extends AbstractController
         $payload = json_decode((string) $request->getContent(), true) ?? [];
         $status = is_string($payload['status'] ?? null) ? $payload['status'] : '';
         $reason = is_string($payload['reason'] ?? null) ? $payload['reason'] : '';
+        // Worker-reported provenance (M5b): the model that will actually run
+        // this step. Recorded on the step_started event payload.
+        $model = is_string($payload['model'] ?? null) ? $payload['model'] : '';
 
         try {
             if (Step::STATUS_RUNNING === $status) {
-                $workflow->markStepRunning($step, $worker);
+                $workflow->markStepRunning($step, $worker, '' !== $model ? $model : null);
             } elseif (Step::STATUS_FAILED === $status) {
                 // A worker reporting its own failure (e.g. the LLM is
                 // unreachable, or the step is unrecoverable). Better than
