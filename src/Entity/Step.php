@@ -55,6 +55,14 @@ class Step
     #[ORM\Column(type: Types::JSON)]
     private array $tags = [];
 
+    /**
+     * Optional per-step LLM model override (docs/model-selection-plan.md §3).
+     * NULL = deployment default (TASKWEAVER_LLM_MODEL). Claim responses
+     * resolve this to a concrete model string for the worker.
+     */
+    #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
+    private ?string $model = null;
+
     #[ORM\Column(type: Types::BOOLEAN)]
     private bool $isFinal = false;
 
@@ -154,6 +162,19 @@ class Step
     public function setTags(array $tags): void
     {
         $this->tags = array_values(array_unique(array_map('trim', $tags)));
+    }
+
+    public function getModel(): ?string
+    {
+        return $this->model;
+    }
+
+    public function setModel(?string $model): void
+    {
+        $this->model = null !== $model ? trim($model) : null;
+        if ('' === $this->model) {
+            $this->model = null;
+        }
     }
 
     public function isFinal(): bool

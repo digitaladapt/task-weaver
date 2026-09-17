@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker;
 
+use function in_array;
 use function is_array;
 use function is_callable;
 use function is_string;
@@ -17,6 +18,7 @@ use RuntimeException;
 use function sprintf;
 use function str_replace;
 use function strlen;
+use stdClass;
 use function substr;
 
 use Symfony\Component\HttpClient\HttpClient;
@@ -62,6 +64,8 @@ final class LlmClient
 {
     private readonly HttpClientInterface $http;
 
+    private string $model;
+
     private int $retriesLeft;
 
     private int $backoffBaseMs = 500;
@@ -80,12 +84,13 @@ final class LlmClient
      */
     public function __construct(
         private readonly string $baseUrl,
-        private readonly string $model = 'Qwen3.5-4B',
+        string $model = 'Qwen3.5-4B',
         private readonly ?string $bearerToken = null,
         array $options = [],
         ?HttpClientInterface $http = null,
     ) {
         $this->http = $http ?? HttpClient::create(['timeout' => 300]);
+        $this->model = '' !== $model ? $model : 'Qwen3.5-4B';
         $this->retriesLeft = max(1, (int) ($options['retries'] ?? 3));
         $this->backoffBaseMs = max(100, (int) ($options['backoff_base_ms'] ?? 500));
         // Proxy channel: the controller-issued URL is ALREADY the full
@@ -93,6 +98,18 @@ final class LlmClient
         // suffix). Direct channel: the URL is a base (e.g. .../v1) and the
         // client appends /chat/completions.
         $this->fullEndpoint = (bool) ($options['full_endpoint'] ?? false);
+    }
+
+    /**
+     * Per-step model selection (docs/model-selection-plan.md §5): switch the
+     * model this client sends in every chat payload. The client (connection,
+     * auth, budget) is reused — only the model field changes.
+     */
+    public function setModel(string $model): void
+    {
+        if ('' !== $model) {
+            $this->model = $model;
+        }
     }
 
     /**
@@ -136,7 +153,7 @@ final class LlmClient
                     'function' => [
                         'name' => $tool['name'],
                         'description' => $tool['description'] ?? '',
-                        'parameters' => $tool['schema'] ?? ['type' => 'object'],
+                        'parameters' => self::normalizeSchemaObjects($tool['schema'] ?? ['type' => 'object']),
                     ],
                 ];
             }, $tools);
@@ -508,5 +525,46 @@ final class LlmClient
         }
 
         return rtrim($this->baseUrl, '/').'/chat/completions';
+    }
+
+    /**
+     * Restore JSON-Schema "object" keyword values before json_encode.
+     *
+     * PHP cannot represent the difference between an empty JSON object
+     * (`{}`) and an empty JSON array (`[]`) once a body is decoded with
+     * associative arrays — both round-trip as `[]` and would re-encode as
+     * `[]`. Strict providers (llama.cpp) reject no-argument tool schemas
+     * because of exactly that: "JSON schema error at #: properties must be
+     * an object". For the keywords JSON Schema requires to be objects, an
+     * empty map is restored to stdClass so the payload serializes as `{}`.
+     *
+     * This has to happen at the serialization boundary (not storage):
+     * neither a DB JSON round-trip nor the controller→worker HTTP hop can
+     * preserve the distinction.
+     *
+     * @param array<string, mixed> $schema
+     *
+     * @return array<string, mixed>
+     */
+    private static function normalizeSchemaObjects(array $schema): array
+    {
+        // JSON Schema keywords whose value must be an object (a map), never
+        // a positional array.
+        $objectKeys = ['properties', 'patternProperties', 'definitions', '$defs', 'dependentSchemas'];
+
+        foreach ($schema as $key => $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+
+            if ([] === $value && in_array((string) $key, $objectKeys, true)) {
+                $schema[$key] = new stdClass();
+                continue;
+            }
+
+            $schema[$key] = self::normalizeSchemaObjects($value);
+        }
+
+        return $schema;
     }
 }

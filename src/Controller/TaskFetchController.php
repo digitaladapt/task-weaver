@@ -40,6 +40,9 @@ final class TaskFetchController extends AbstractController
             $steps[] = [
                 'id' => $step->getId()->toRfc4122(),
                 'name' => $step->getName(),
+                // The RAW stored per-step model (nullable — the RESOLVED
+                // value comes from the claim response).
+                'model' => $step->getModel(),
                 'tags' => $step->getTags(),
                 'is_final' => $step->isFinal(),
                 'status' => $step->getStatus(),

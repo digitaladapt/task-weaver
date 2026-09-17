@@ -117,10 +117,11 @@ final class ConversationService
     /**
      * Post a user message and ensure a reply run exists for it.
      */
-    public function postMessage(Conversation $conversation, string $content, array $tags = []): Message
+    public function postMessage(Conversation $conversation, string $content, array $tags = [], ?string $model = null): Message
     {
         $message = new Message($conversation, Message::ROLE_USER, trim($content));
         $message->setTags($tags);
+        $message->setModel($model);
         $conversation->addMessage($message);
         $this->em->persist($message);
         $this->em->flush();
@@ -246,6 +247,10 @@ final class ConversationService
         } else {
             $message->markCompleted();
             $assistant = new Message($conversation, Message::ROLE_ASSISTANT, $this->assistantContent($step));
+            // Provenance (M5c): record the model that actually ran — prefer
+            // the step_started event's worker-reported model, fall back to
+            // the step's selected model.
+            $assistant->setModel($this->stepRunModel($step) ?? $step->getModel());
             $assistant->markCompleted();
             $this->materializeToolLogs($assistant, $step);
             $conversation->addMessage($assistant);
@@ -525,8 +530,30 @@ final class ConversationService
     }
 
     /**
-     * @param array<string, mixed> $args
+     * The model that actually ran the reply step, as reported by the worker
+     * on the step_started event payload (M5b). Null when no model was
+     * recorded (old worker, or a run that never started).
      */
+    private function stepRunModel(Step $step): ?string
+    {
+        $events = $this->em->getRepository(Event::class)->findBy(
+            ['step' => $step->getId()->toBinary()],
+            ['timestamp' => 'ASC']
+        );
+
+        foreach ($events as $event) {
+            if (Event::TYPE_STEP_STARTED !== $event->getType()) {
+                continue;
+            }
+            $model = $event->getPayload()['model'] ?? null;
+            if (is_string($model) && '' !== $model) {
+                return $model;
+            }
+        }
+
+        return null;
+    }
+
     private function signature(string $name, array $args): string
     {
         return $name.'|'.(string) (json_encode($args, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES) ?: '');
@@ -549,6 +576,10 @@ final class ConversationService
         $step->setIsFinal(true);
         $step->setSortOrder(0);
         $step->setTags($this->responseTags($conversation, $message));
+        // The selected model rides on the throwaway step so the claim
+        // response resolves it for the worker (docs/model-selection-plan.md
+        // §5 / M5c).
+        $step->setModel($message->getModel());
         $task->addStep($step);
 
         $this->em->persist($task);

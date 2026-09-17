@@ -138,10 +138,24 @@ final class RunCommand extends Command
         // a local-debug escape hatch.
         $llmUrl = $this->resolveVar($input, 'llm-url', 'TASKWEAVER_LLM_URL', 'http://llm:8080/v1', $config['llm_url'] ?? null);
 
-        // Same flow for the model: prefer the controller's issued value unless
-        // the operator explicitly overrode it via --llm-model (CLI) or
-        // TASKWEAVER_LLM_MODEL (env).
-        $llmModel = $this->resolveVar($input, 'llm-model', 'TASKWEAVER_LLM_MODEL', 'Qwen3.5-4B', $config['llm_model'] ?? null);
+        // Model resolution, tier 1 of 4 (docs/model-selection-plan.md §5.1):
+        // an operator override via --llm-model (CLI) or TASKWEAVER_LLM_MODEL
+        // (env) wins for EVERY step this worker runs. Without it, the model
+        // is resolved per claimed step (claim-issued step.model, else the
+        // provision-config default) inside the run loop.
+        $modelOverride = null;
+        if ($input->hasParameterOption('--llm-model')) {
+            $modelOverride = (string) $input->getOption('llm-model');
+        } else {
+            $envModel = getenv('TASKWEAVER_LLM_MODEL');
+            if (false !== $envModel && '' !== $envModel) {
+                $modelOverride = (string) $envModel;
+            }
+        }
+
+        // Provision default (tier 3) — the client's initial model; each claim
+        // may switch it per step.
+        $llmModel = $modelOverride ?? (is_string($config['llm_model'] ?? null) && '' !== $config['llm_model'] ? (string) $config['llm_model'] : 'Qwen3.5-4B');
 
         // use max_rounds from controller unless explicit worker override
         $maxRounds = (int) $this->resolveVar($input, 'max-rounds', 'TASKWEAVER_MAX_ROUNDS', (string) self::MAX_LLM_ROUNDS, $config['max_rounds'] ?? null);
@@ -221,11 +235,15 @@ final class RunCommand extends Command
 
             $taskId = (string) $task['id'];
             $stepId = (string) $step['id'];
+            // Claim-issued step model (tier 2): already resolved by the
+            // controller to override-or-default. Null only against an old
+            // controller that doesn't send the field.
+            $stepModel = isset($step['model']) && is_string($step['model']) && '' !== $step['model'] ? (string) $step['model'] : null;
 
             $output->writeln(sprintf('Claimed task %s step %s', $taskId, $stepId));
 
             try {
-                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $maxRounds, $llmStream, $output);
+                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $stepModel, $modelOverride, $llmModel, $maxRounds, $llmStream, $output);
             } catch (HttpException $e) {
                 if ($e->isDenial()) {
                     // Abandon-on-denial: the step's fate is already decided
@@ -260,6 +278,9 @@ final class RunCommand extends Command
         string $systemPromptOverride,
         string $taskId,
         string $stepId,
+        ?string $stepModel,
+        ?string $modelOverride,
+        string $provisionModel,
         int $maxRounds,
         bool $llmStream,
         OutputInterface $output,
@@ -272,8 +293,14 @@ final class RunCommand extends Command
             throw new HttpException('Step not in task data', 0);
         }
 
-        $client->markRunning($taskId, $stepId);
-        $output->writeln(sprintf('Step "%s" marked running', $stepData['name'] ?? $stepId));
+        // Per-step model resolution (§5.1): operator override > claim-issued
+        // step model > provision default. Applied to the shared client; the
+        // payload's model field is what actually runs.
+        $effectiveModel = $modelOverride ?? $stepModel ?? $provisionModel;
+        $llm->setModel($effectiveModel);
+
+        $client->markRunning($taskId, $stepId, $effectiveModel);
+        $output->writeln(sprintf('Step "%s" marked running (model: %s)', $stepData['name'] ?? $stepId, $effectiveModel));
 
         // Register an event → event-scoped key.
         $event = $client->registerEvent($taskId, $stepId);
