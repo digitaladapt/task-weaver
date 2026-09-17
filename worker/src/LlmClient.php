@@ -185,7 +185,19 @@ final class LlmClient
                     : $this->postOnce($payload);
             } catch (LlmTransientException $e) {
                 if ($attempt >= $maxAttempts) {
-                    throw new RuntimeException(sprintf('LLM call failed after %d attempts: %s', $attempt, $e->getMessage()), 0, $e);
+                    // On last retry, return any partial content/tool-calls the
+                    // model managed to stream before the timeout hit.
+                    if (null !== $e->partialContent || null !== $e->partialToolCalls) {
+                        return [
+                            'content' => $e->partialContent ?? '',
+                            'tool_calls' => $this->assembleToolCalls($e->partialToolCalls ?? []),
+                            'usage' => [],
+                        ];
+                    }
+                    throw new RuntimeException(
+                        sprintf('LLM call failed after %d attempts: %s', $attempt, $e->getMessage()),
+                        0, $e
+                    );
                 }
                 usleep($backoffMs * 1000 + random_int(0, $backoffMs));
                 $backoffMs = min($backoffMs * 2, 10_000);
@@ -317,10 +329,10 @@ final class LlmClient
                 }
             }
         } catch (Throwable $e) {
-            // Transport error mid-stream — cancel and retry.
+            // Transport error mid-stream — cancel and carry partial state
+            // for the caller to salvage on last-retry fallback.
             $response->cancel();
-
-            throw new LlmTransientException('Transport error: '.$e->getMessage());
+            throw new LlmTransientException('Transport error: ' . $e->getMessage(), 0, $e, $content, $toolCallDeltas);
         }
 
         // Upstream answered with a plain JSON body (no SSE frames) even
