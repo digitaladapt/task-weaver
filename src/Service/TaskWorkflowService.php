@@ -120,6 +120,10 @@ final class TaskWorkflowService
             $payload['model'] = $model;
         }
         $this->log(Event::TYPE_STEP_STARTED, $step, $worker, $payload);
+        // Flush now: the event must survive the request even though nothing
+        // else down this code path persists afterwards (the worker's status
+        // PATCH ends here). Same contract as completeStep()/failStep().
+        $this->em->flush();
         $this->logger->info('Step started', ['step' => $step->getId()->toRfc4122()]);
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TaskWeaverWorker;
 
+use function in_array;
 use function is_array;
 use function is_callable;
 use function is_string;
@@ -17,6 +18,7 @@ use RuntimeException;
 use function sprintf;
 use function str_replace;
 use function strlen;
+use stdClass;
 use function substr;
 
 use Symfony\Component\HttpClient\HttpClient;
@@ -151,7 +153,7 @@ final class LlmClient
                     'function' => [
                         'name' => $tool['name'],
                         'description' => $tool['description'] ?? '',
-                        'parameters' => $tool['schema'] ?? ['type' => 'object'],
+                        'parameters' => self::normalizeSchemaObjects($tool['schema'] ?? ['type' => 'object']),
                     ],
                 ];
             }, $tools);
@@ -523,5 +525,46 @@ final class LlmClient
         }
 
         return rtrim($this->baseUrl, '/').'/chat/completions';
+    }
+
+    /**
+     * Restore JSON-Schema "object" keyword values before json_encode.
+     *
+     * PHP cannot represent the difference between an empty JSON object
+     * (`{}`) and an empty JSON array (`[]`) once a body is decoded with
+     * associative arrays — both round-trip as `[]` and would re-encode as
+     * `[]`. Strict providers (llama.cpp) reject no-argument tool schemas
+     * because of exactly that: "JSON schema error at #: properties must be
+     * an object". For the keywords JSON Schema requires to be objects, an
+     * empty map is restored to stdClass so the payload serializes as `{}`.
+     *
+     * This has to happen at the serialization boundary (not storage):
+     * neither a DB JSON round-trip nor the controller→worker HTTP hop can
+     * preserve the distinction.
+     *
+     * @param array<string, mixed> $schema
+     *
+     * @return array<string, mixed>
+     */
+    private static function normalizeSchemaObjects(array $schema): array
+    {
+        // JSON Schema keywords whose value must be an object (a map), never
+        // a positional array.
+        $objectKeys = ['properties', 'patternProperties', 'definitions', '$defs', 'dependentSchemas'];
+
+        foreach ($schema as $key => $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+
+            if ([] === $value && in_array((string) $key, $objectKeys, true)) {
+                $schema[$key] = new stdClass();
+                continue;
+            }
+
+            $schema[$key] = self::normalizeSchemaObjects($value);
+        }
+
+        return $schema;
     }
 }
