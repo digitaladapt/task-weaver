@@ -10,6 +10,7 @@ use App\Service\TaskWorkflowService;
 use App\Service\WorkerAuthService;
 
 use function is_array;
+use function is_string;
 
 use LogicException;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -45,8 +46,16 @@ final class StepCompleteController extends AbstractController
         $payload = json_decode((string) $request->getContent(), true) ?? [];
         $result = is_array($payload['result'] ?? null) ? $payload['result'] : [];
 
+        // A truncated-but-completed step (docs/step-liveness-plan.md §3.5):
+        // the worker ran out of budget mid-generation and is submitting what
+        // it has. Recorded on the step_completed event so the audit trail is
+        // honest about it, and so the final-step envelope can carry the
+        // marker through to the consumer.
+        $partial = ($payload['partial'] ?? false) === true;
+        $reason = is_string($payload['reason'] ?? null) ? $payload['reason'] : '';
+
         try {
-            $workflow->completeStep($step, $worker, $result);
+            $workflow->completeStep($step, $worker, $result, $partial, $reason);
         } catch (LogicException $e) {
             return $this->json(['error' => $e->getMessage()], Response::HTTP_CONFLICT);
         }
@@ -58,6 +67,7 @@ final class StepCompleteController extends AbstractController
             'ok' => true,
             'status' => 'completed',
             'task_status' => $step->getTask()->getStatus(),
+            'partial' => $partial,
         ]);
     }
 }

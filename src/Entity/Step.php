@@ -110,6 +110,21 @@ class Step
     private ?string $runId = null;
 
     /**
+     * True when the step's result was truncated by a budget (idle or e2e)
+     * rather than the worker finishing normally. Recorded so the audit trail
+     * and the final-step envelope can say this input is incomplete
+     * (docs/step-liveness-plan.md §3.5).
+     */
+    #[ORM\Column(type: Types::BOOLEAN, options: ['default' => false])]
+    private bool $partial = false;
+
+    /**
+     * Why the step was truncated (free text; only meaningful with $partial).
+     */
+    #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
+    private ?string $partialReason = null;
+
+    /**
      * @var Collection<int, Event>
      */
     #[ORM\OneToMany(mappedBy: 'step', targetEntity: Event::class, cascade: ['remove'], orphanRemoval: true)]
@@ -334,6 +349,25 @@ class Step
     public function getResult(): ?array
     {
         return $this->result;
+    }
+
+    /**
+     * Whether this result is a budget-truncated partial (see $partial).
+     */
+    public function isPartial(): bool
+    {
+        return $this->partial;
+    }
+
+    public function getPartialReason(): ?string
+    {
+        return $this->partialReason;
+    }
+
+    public function setPartial(bool $partial, ?string $reason = null): void
+    {
+        $this->partial = $partial;
+        $this->partialReason = $partial ? $reason : null;
     }
 
     /**

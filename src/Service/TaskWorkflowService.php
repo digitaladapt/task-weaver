@@ -72,6 +72,7 @@ final class TaskWorkflowService
             $step->setExpiresAt(null);
             $step->setIdleExpiresAt(null);
             $step->setResult(null);
+            $step->setPartial(false);
             $step->setRunId(null);
             $this->em->persist($step);
         }
@@ -250,7 +251,7 @@ final class TaskWorkflowService
      *     final step claimable if all siblings are done (task → ready);
      *   - when this was the final step, marks the task completed.
      */
-    public function completeStep(Step $step, Worker $worker, array $result): void
+    public function completeStep(Step $step, Worker $worker, array $result, bool $partial = false, string $reason = ''): void
     {
         if (Step::STATUS_RUNNING !== $step->getStatus()) {
             throw new LogicException(sprintf('Cannot complete step %s: status is %s, expected running.', $step->getId()->toRfc4122(), $step->getStatus()));
@@ -270,11 +271,20 @@ final class TaskWorkflowService
         $this->em->getRepository(Event::class)->revokeKeysForStep($step->getId()->toRfc4122());
 
         $step->setResult($result);
+        $step->setPartial($partial, '' !== $reason ? $reason : null);
         $step->setStatus(Step::STATUS_COMPLETED);
         $step->setFinishedAt(new DateTimeImmutable());
         $this->em->persist($step);
 
-        $this->log(Event::TYPE_STEP_COMPLETED, $step, $worker, ['result' => $result]);
+        // A truncated-but-completed step records the marker so the audit trail
+        // (and the final-step envelope) is honest that this result is
+        // incomplete (docs/step-liveness-plan.md §3.5).
+        $completedPayload = ['result' => $result];
+        if ($partial) {
+            $completedPayload['partial'] = true;
+            $completedPayload['reason'] = '' !== $reason ? $reason : 'partial result';
+        }
+        $this->log(Event::TYPE_STEP_COMPLETED, $step, $worker, $completedPayload);
 
         $task = $step->getTask();
 

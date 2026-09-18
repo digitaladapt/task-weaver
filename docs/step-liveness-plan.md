@@ -1,6 +1,6 @@
 # Step Liveness — Two-Clock Deadlines & Cooperative Worker Abort
 
-**Status:** Phase 1 ✓ implemented (branch `feature/step-liveness-clocks`) · Phase 2 (worker) not started · 2026-09-17
+**Status:** Phase 1 ✓ implemented · Phase 2 ✓ implemented (branch `feature/step-liveness-clocks`) · Phase 3 partially done · 2026-09-17
 **Issue:** *(TBD)*
 **Interlocks:** SPEC.md §Configuration / §Stale Step Expiry · WORKER.md §9 + decision #4 · `mcp-progress-plan.md` §3.4 (timeout ladder) · `docs/model-selection-plan.md` §5.1 (config precedence)
 
@@ -267,18 +267,24 @@ Migration alongside the newest existing one (`Version20260916100000.php`); plain
 8. **§3.7**: gate `completeStep()` + status transitions on `isStale()` → `409`.
 9. **§3.5a**: `POST /api/worker/progress/{taskId}/{stepId}` — refresh idle deadline, no event row.
 
-### Phase 2 — Worker cooperation
+### Phase 2 — Worker cooperation ✓ implemented
 
-1. `ControllerClient`: read `budget` from the status response; pass it to the run loop.
-2. `LlmClient`: accept a deadline + idle threshold; abort the stream on either; return partial content with `truncated` + `reason` (reusing the `postWithRetry` salvage path).
-3. `RunCommand`: arm both clocks at `markRunning`; check at the top of each round and before each tool call; `complete(partial: true, reason: …)` on abort. Extend `resolveVar` chain + `--step-idle-timeout` / `--step-grace` options.
-4. Provision config: issue `step_idle_timeout` + `step_grace` (and finally consume `step_timeout`).
+1. `ControllerClient`: read `budget` from the status response; pass it to the run loop. ✓ (returns the response; `StepBudget` parses it)
+2. `LlmClient`: accept a deadline + idle threshold; abort the stream on either; return partial content with `truncated` + `reason` (reusing the `postWithRetry` salvage path). ✓ (`setIdleAbortSeconds()` / `setE2eAbortAt()`, `LlmAbortException`)
+3. `RunCommand`: arm both clocks at `markRunning`; check at the top of each round and before each tool call; `complete(partial: true, reason: …)` on abort. ✓
+4. Provision config: issue `step_idle_timeout` + `step_grace` (and finally consume `step_timeout`). ✓
+
+The stall signal turned out to be simpler than planned: rather than timing gaps
+ourselves, the idle window is pushed down as the request's `timeout` option, and
+Symfony's own `isTimeout()` chunk *is* the signal. That is exact, needs no
+polling, and is deterministically testable with `MockResponse` ("yielding an
+empty string simulates an idle timeout").
 
 ### Phase 3 — Surfacing
 
-1. Admin task/step detail: show both deadlines and the idle-since derivation.
-2. Final-step envelope: carry `partial: true` / `reason` on the entry so the final step knows an input is incomplete.
-3. Docs: SPEC.md §Configuration + §Stale Step Expiry + decisions log; WORKER.md §9 + decision #4; `.env.example` / `.env.dev` / `.env.test`.
+1. Admin task/step detail: show both deadlines and the idle-since derivation. *(pending)*
+2. Final-step envelope: carry `partial: true` / `reason` on the entry so the final step knows an input is incomplete. ✓ (step.partial → fetch payload → envelope `partial` + `note`)
+3. Docs: SPEC.md §Configuration + §Stale Step Expiry + decisions log; WORKER.md §9 + decision #4; `.env.example` / `.env.dev` / `.env.test`. *(env done; SPEC/WORKER pending)*
 
 ### Phase 4 — Verification
 

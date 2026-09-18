@@ -52,6 +52,10 @@ final class TaskFetchController extends AbstractController
                 // Completed non-final steps carry their result; failed ones
                 // carry an error marker instead (no result is persisted).
                 'result' => $step->isFinal() ? null : $step->getResult(),
+                // True when the step was truncated by a budget rather than
+                // finishing: the final step then knows this input is
+                // incomplete (docs/step-liveness-plan.md §3.5).
+                'partial' => $step->isPartial(),
                 // External tool schemas for this step (tag-matched), only.
                 'tools' => $toolResolver->schemasForStep($step),
             ];

@@ -503,7 +503,99 @@ final class StepLivenessTest extends WebTestCase
         self::assertResponseIsSuccessful();
     }
 
-    // ── 8. Budget block ─────────────────────────────────────────────────
+    // ── 8. Partial completion (§3.5) ────────────────────────────────────
+
+    public function testPartialCompletionIsRecordedOnStepAndEvent(): void
+    {
+        [$taskId, $step, $worker] = $this->seedReadyStep();
+        $workflow = $this->workflow();
+        $workflow->markStepRunning($step, $worker);
+
+        $this->client->request('POST', '/api/worker/step/'.$taskId->getId()->toRfc4122().'/'.$step->getId()->toRfc4122().'/complete', [], [], [
+            'HTTP_AUTHORIZATION' => 'Bearer liveness-key',
+            'CONTENT_TYPE' => 'application/json',
+        ], json_encode([
+            'result' => ['summary' => 'Half an answer'],
+            'partial' => true,
+            'reason' => 'idle timeout: LLM silent 105s',
+        ]));
+
+        self::assertResponseIsSuccessful();
+        $body = json_decode((string) $this->client->getResponse()->getContent(), true);
+        self::assertTrue($body['partial'] ?? false, 'the response must echo the truncation');
+
+        $em = $this->entityManager();
+        $em->clear();
+
+        // A truncated step is COMPLETED (not failed): failure persists no
+        // result, which would discard the partial output we saved.
+        $fresh = $em->getRepository(Step::class)->find($step->getId());
+        self::assertSame(Step::STATUS_COMPLETED, $fresh->getStatus());
+        self::assertTrue($fresh->isPartial());
+        self::assertSame('idle timeout: LLM silent 105s', $fresh->getPartialReason());
+        self::assertSame(['summary' => 'Half an answer'], $fresh->getResult());
+
+        // The audit trail records it too.
+        $completed = $em->getRepository(Event::class)->findOneBy(['type' => Event::TYPE_STEP_COMPLETED]);
+        self::assertNotNull($completed);
+        self::assertTrue($completed->getPayload()['partial'] ?? false);
+    }
+
+    public function testOrdinaryCompletionIsNotMarkedPartial(): void
+    {
+        [$taskId, $step, $worker] = $this->seedReadyStep();
+        $workflow = $this->workflow();
+        $workflow->markStepRunning($step, $worker);
+
+        $this->client->request('POST', '/api/worker/step/'.$taskId->getId()->toRfc4122().'/'.$step->getId()->toRfc4122().'/complete', [], [], [
+            'HTTP_AUTHORIZATION' => 'Bearer liveness-key',
+            'CONTENT_TYPE' => 'application/json',
+        ], json_encode(['result' => ['summary' => 'Whole answer']]));
+
+        self::assertResponseIsSuccessful();
+
+        $em = $this->entityManager();
+        $em->clear();
+
+        $fresh = $em->getRepository(Step::class)->find($step->getId());
+        self::assertFalse($fresh->isPartial(), 'a normal completion must not be flagged');
+        self::assertNull($fresh->getPartialReason());
+
+        $completed = $em->getRepository(Event::class)->findOneBy(['type' => Event::TYPE_STEP_COMPLETED]);
+        self::assertNotNull($completed);
+        self::assertArrayNotHasKey('partial', $completed->getPayload());
+    }
+
+    public function testFetchExposesPartialSoTheFinalStepKnows(): void
+    {
+        [$taskId, $step, $worker] = $this->seedReadyStep();
+        $workflow = $this->workflow();
+        $workflow->markStepRunning($step, $worker);
+
+        $this->client->request('POST', '/api/worker/step/'.$taskId->getId()->toRfc4122().'/'.$step->getId()->toRfc4122().'/complete', [], [], [
+            'HTTP_AUTHORIZATION' => 'Bearer liveness-key',
+            'CONTENT_TYPE' => 'application/json',
+        ], json_encode([
+            'result' => ['summary' => 'truncated'],
+            'partial' => true,
+            'reason' => 'step deadline reached',
+        ]));
+
+        self::assertResponseIsSuccessful();
+
+        // The worker fetches the task to build the final-step envelope; the
+        // marker must ride along or the final step would treat a truncated
+        // input as whole.
+        $this->client->request('GET', '/api/worker/task/'.$taskId->getId()->toRfc4122(), [], [], [
+            'HTTP_AUTHORIZATION' => 'Bearer liveness-key',
+        ]);
+
+        self::assertResponseIsSuccessful();
+        $body = json_decode((string) $this->client->getResponse()->getContent(), true);
+        self::assertTrue($body['steps'][0]['partial'] ?? false, 'fetch must expose the partial flag');
+    }
+
+    // ── 9. Budget block ─────────────────────────────────────────────────
 
     public function testStatusResponseCarriesBudgetBlock(): void
     {
