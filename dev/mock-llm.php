@@ -24,6 +24,18 @@ declare(strict_types=1);
  *       worker requested stream:true; if the worker didn't request
  *       streaming, the same entry is emitted as a plain JSON response.
  *
+ *   { "content": "slow…", "chunk_delay": 2 }
+ *     → pause `chunk_delay` seconds between pieces of the response.
+ *
+ *       CAVEAT: under PHP's built-in server (`php -S`) the response body is
+ *       buffered and delivered at once when the script ends, so this models a
+ *       model that is slow to *respond*, NOT one that streams slowly. To
+ *       exercise the worker's progress beats against genuinely incremental
+ *       output you need a streaming SAPI (php-fpm/nginx, frankenphp). The
+ *       beats themselves are covered by the controller functional tests
+ *       (tests/Functional/StepLivenessTest.php), which drive the endpoint
+ *       directly.
+ *
  *   { "content": "partial…", "stall_after": 3 }
  *     → emit the content, then go SILENT (no frames, no [DONE]) for
  *       `stall_after` seconds and hang up. Exercises the worker's idle
@@ -186,7 +198,13 @@ function stream_content(string $content, array $fullBody, array $request): never
 
     // Split content into a few pieces so the worker exercises delta assembly.
     $pieces = chunk_text($content, 5);
+    $chunkDelay = $fullBody['chunk_delay'] ?? null;
     foreach ($pieces as $piece) {
+        // Slow-model mode: keep trickling output. Every chunk is real progress,
+        // so the worker's beats should keep refreshing the idle deadline.
+        if (is_numeric($chunkDelay) && (float) $chunkDelay > 0) {
+            usleep((int) ((float) $chunkDelay * 1_000_000));
+        }
         sse_data((string) json_encode([
             'id' => $id,
             'object' => 'chat.completion.chunk',
@@ -239,8 +257,10 @@ function stream_entry(string $content, array $toolCalls, array $request, array $
     if ($toolCalls === []) {
         // Carry stall_after through so a content entry can hang mid-stream.
         $fullBody = ['id' => $id, 'created' => $created];
-        if (isset($entry['stall_after'])) {
-            $fullBody['stall_after'] = $entry['stall_after'];
+        foreach (['stall_after', 'chunk_delay'] as $passThrough) {
+            if (isset($entry[$passThrough])) {
+                $fullBody[$passThrough] = $entry[$passThrough];
+            }
         }
         stream_content($content, $fullBody, $request);
     }
