@@ -80,10 +80,20 @@ class Step
 
     /**
      * Deadline set when the step is marked `running`: now + step-timeout.
+     * The END-TO-END budget — never refreshed for the life of the step.
      * Also gates the step's event keys. (SPEC.md → Stale Step Expiry).
      */
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
     private ?DateTimeImmutable $expiresAt = null;
+
+    /**
+     * Rolling deadline: refreshed by every sign of activity (event
+     * registration, tool calls, streamed-output progress beats). When it
+     * passes, the step has gone silent for longer than the idle budget and
+     * is reaped as a worker stall (docs/step-liveness-plan.md §3.1).
+     */
+    #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?DateTimeImmutable $idleExpiresAt = null;
 
     /**
      * Result of the step; for the final step this is the aggregated envelope.
@@ -98,6 +108,21 @@ class Step
      */
     #[ORM\Column(type: Types::STRING, length: 36, nullable: true)]
     private ?string $runId = null;
+
+    /**
+     * True when the step's result was truncated by a budget (idle or e2e)
+     * rather than the worker finishing normally. Recorded so the audit trail
+     * and the final-step envelope can say this input is incomplete
+     * (docs/step-liveness-plan.md §3.5).
+     */
+    #[ORM\Column(type: Types::BOOLEAN, options: ['default' => false])]
+    private bool $partial = false;
+
+    /**
+     * Why the step was truncated (free text; only meaningful with $partial).
+     */
+    #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
+    private ?string $partialReason = null;
 
     /**
      * @var Collection<int, Event>
@@ -240,11 +265,72 @@ class Step
         $this->expiresAt = $expiresAt;
     }
 
-    public function isExpired(DateTimeImmutable $now): bool
+    public function getIdleExpiresAt(): ?DateTimeImmutable
+    {
+        return $this->idleExpiresAt;
+    }
+
+    public function setIdleExpiresAt(?DateTimeImmutable $idleExpiresAt): void
+    {
+        $this->idleExpiresAt = $idleExpiresAt;
+    }
+
+    /**
+     * End-to-end deadline passed (the absolute budget).
+     */
+    public function hasExpiredE2e(DateTimeImmutable $now): bool
     {
         return self::STATUS_RUNNING === $this->status
             && null !== $this->expiresAt
             && $this->expiresAt < $now;
+    }
+
+    /**
+     * Idle deadline passed (no activity for longer than the idle budget).
+     * A step with no idle deadline stamped (pre-migration rows, pending
+     * steps) is never idle-stale — absence of a clock is not a stall.
+     */
+    public function hasExpiredIdle(DateTimeImmutable $now): bool
+    {
+        return self::STATUS_RUNNING === $this->status
+            && null !== $this->idleExpiresAt
+            && $this->idleExpiresAt < $now;
+    }
+
+    /**
+     * Whether the step is stale on EITHER clock. This is the single
+     * "is this step still alive?" predicate: it gates event keys, late
+     * complete/status transitions, and lazy expiry
+     * (docs/step-liveness-plan.md §3.2).
+     */
+    public function isStale(DateTimeImmutable $now): bool
+    {
+        return $this->hasExpiredE2e($now) || $this->hasExpiredIdle($now);
+    }
+
+    /**
+     * Which clock tripped (for accurate expiry reasons).
+     */
+    public function staleReason(DateTimeImmutable $now): string
+    {
+        if ($this->hasExpiredE2e($now)) {
+            return 'step deadline reached ('.($this->expiresAt?->format('c') ?? '?').')';
+        }
+
+        if ($this->hasExpiredIdle($now)) {
+            return 'no activity since '.($this->idleExpiresAt?->format('c') ?? '?');
+        }
+
+        return 'unknown';
+    }
+
+    /**
+     * @deprecated use hasExpiredE2e()/isStale() — kept as the e2e-only
+     *             predicate so existing callers keep their meaning
+     */
+    public function isExpired(DateTimeImmutable $now): bool
+    {
+        return $this->hasExpiredE2e($now);
     }
 
     /**
@@ -263,6 +349,25 @@ class Step
     public function getResult(): ?array
     {
         return $this->result;
+    }
+
+    /**
+     * Whether this result is a budget-truncated partial (see $partial).
+     */
+    public function isPartial(): bool
+    {
+        return $this->partial;
+    }
+
+    public function getPartialReason(): ?string
+    {
+        return $this->partialReason;
+    }
+
+    public function setPartial(bool $partial, ?string $reason = null): void
+    {
+        $this->partial = $partial;
+        $this->partialReason = $partial ? $reason : null;
     }
 
     /**

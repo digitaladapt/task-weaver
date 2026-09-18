@@ -23,6 +23,7 @@ use const JSON_UNESCAPED_SLASHES;
 use JsonException;
 use RuntimeException;
 
+use function microtime;
 use function sprintf;
 use function strlen;
 
@@ -35,6 +36,7 @@ use TaskWeaverWorker\ContextBudget;
 use TaskWeaverWorker\ControllerClient;
 use TaskWeaverWorker\HttpException;
 use TaskWeaverWorker\LlmClient;
+use TaskWeaverWorker\StepBudget;
 use TaskWeaverWorker\Tool\InternalToolRegistry;
 use TaskWeaverWorker\Tool\TerminalTool;
 
@@ -72,7 +74,10 @@ final class RunCommand extends Command
             ->addOption('llm-model', null, InputOption::VALUE_REQUIRED, 'Local LLM model')
             ->addOption('once', null, InputOption::VALUE_NONE, 'Claim and run one task, then exit')
             ->addOption('max-rounds', null, InputOption::VALUE_REQUIRED, 'Max LLM rounds per step')
-            ->addOption('llm-stream', null, InputOption::VALUE_REQUIRED, 'Enable SSE streaming from the LLM (1/0)');
+            ->addOption('llm-stream', null, InputOption::VALUE_REQUIRED, 'Enable SSE streaming from the LLM (1/0)')
+            ->addOption('step-idle-timeout', null, InputOption::VALUE_REQUIRED, 'Override the idle (silence) budget in seconds — must be lower than the controller\'s')
+            ->addOption('step-timeout', null, InputOption::VALUE_REQUIRED, 'Override the end-to-end budget in seconds — can only shorten the controller\'s window')
+            ->addOption('step-grace', null, InputOption::VALUE_REQUIRED, 'Override the grace period (seconds kept in reserve for transmitting)');
     }
 
     /* order of resolution:
@@ -160,6 +165,23 @@ final class RunCommand extends Command
         // use max_rounds from controller unless explicit worker override
         $maxRounds = (int) $this->resolveVar($input, 'max-rounds', 'TASKWEAVER_MAX_ROUNDS', (string) self::MAX_LLM_ROUNDS, $config['max_rounds'] ?? null);
 
+        // Operator clock overrides (CLI > env), mirroring resolveVar. These
+        // win over the controller-issued budget so an operator can make this
+        // worker MORE conservative than the fleet — never less: the
+        // controller's deadlines stay authoritative (plan §3.9).
+        $budgetOverrides = [];
+        foreach (['step-idle-timeout' => 'step_idle_timeout', 'step-timeout' => 'step_timeout', 'step-grace' => 'step_grace'] as $opt => $key) {
+            $envName = 'TASKWEAVER_'.strtoupper(str_replace('-', '_', $opt));
+            if ($input->hasParameterOption('--'.$opt)) {
+                $budgetOverrides[$key] = (string) $input->getOption($opt);
+                continue;
+            }
+            $envValue = getenv($envName);
+            if (false !== $envValue && '' !== $envValue) {
+                $budgetOverrides[$key] = (string) $envValue;
+            }
+        }
+
         $once = (bool) $input->getOption('once');
 
         // A relative issued URL (proxy mode: '/api/worker/llm') resolves
@@ -243,7 +265,7 @@ final class RunCommand extends Command
             $output->writeln(sprintf('Claimed task %s step %s', $taskId, $stepId));
 
             try {
-                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $stepModel, $modelOverride, $llmModel, $maxRounds, $llmStream, $output);
+                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $stepModel, $modelOverride, $llmModel, $maxRounds, $llmStream, $config, $budgetOverrides, $output);
             } catch (HttpException $e) {
                 if ($e->isDenial()) {
                     // Abandon-on-denial: the step's fate is already decided
@@ -283,6 +305,8 @@ final class RunCommand extends Command
         string $provisionModel,
         int $maxRounds,
         bool $llmStream,
+        array $provisionConfig,
+        array $budgetOverrides,
         OutputInterface $output,
     ): void {
         // Fetch task + schema, then mark running.
@@ -299,8 +323,28 @@ final class RunCommand extends Command
         $effectiveModel = $modelOverride ?? $stepModel ?? $provisionModel;
         $llm->setModel($effectiveModel);
 
-        $client->markRunning($taskId, $stepId, $effectiveModel);
+        // Arm the step's two clocks from the controller's budget block
+        // (docs/step-liveness-plan.md §3.3).
+        $stepBudget = StepBudget::fromStatusResponse(
+            $client->markRunning($taskId, $stepId, $effectiveModel),
+            $provisionConfig,
+            null,
+            $budgetOverrides,
+        );
+
+        // The LLM stream aborts on the same clocks the loop checks, so a
+        // stalled generation cannot outlive the step.
+        $llm->setIdleAbortSeconds($stepBudget->idleWindowSeconds());
+
         $output->writeln(sprintf('Step "%s" marked running (model: %s)', $stepData['name'] ?? $stepId, $effectiveModel));
+        if ($stepBudget->isEnabled()) {
+            $output->writeln(sprintf(
+                'Clocks armed: idle %ds, e2e %ds, grace %ds',
+                (int) $stepBudget->idleTimeout(),
+                (int) $stepBudget->e2eRemainingSeconds(),
+                (int) $stepBudget->grace(),
+            ));
+        }
 
         // Register an event → event-scoped key.
         $event = $client->registerEvent($taskId, $stepId);
@@ -342,6 +386,8 @@ final class RunCommand extends Command
         $result = ['summary' => sprintf('Step "%s" ran with %d tools available.', $stepName, count($tools))];
 
         $round = 0;
+        $partialReason = null;
+
         while (true) {
             if (++$round > $maxRounds) {
                 // Bounded rounds: the model kept calling tools (or emitting
@@ -350,25 +396,79 @@ final class RunCommand extends Command
                 throw new RuntimeException(sprintf('Step exceeded %d LLM rounds without completing', $maxRounds));
             }
 
+            // Budget check between rounds (docs/step-liveness-plan.md §3.4):
+            // healthy, but out of time. Stop BEFORE issuing another LLM call
+            // and submit whatever we have, rather than being cut off by a 401
+            // with nothing to show for it.
+            if ($stepBudget->shouldStop()) {
+                $partialReason = $stepBudget->reason();
+                break;
+            }
+
+            // Re-arm the e2e tripwire on the LLM client each round: a
+            // generation still running when the deadline lands is abandoned
+            // mid-stream with its partial output preserved.
+            $llm->setE2eAbortAt(microtime(true) + $stepBudget->e2eRemainingSeconds());
+
+            // Progress beats: while chunks arrive, tell the controller we are
+            // still working so its rolling idle clock keeps moving (§3.5a).
+            // Throttled to at most one beat per idle/3, and strictly
+            // best-effort — a failed beat must never fail the step.
+            $lastBeatAt = 0.0;
+            $beatInterval = max(5.0, $stepBudget->idleWindowSeconds() / 3);
+            $onChunk = function (int $chars) use ($output, $round, $client, $taskId, $stepId, $stepBudget, &$lastBeatAt, $beatInterval): void {
+                if ($output->isVerbose()) {
+                    $output->writeln(sprintf('  streamed %d chars (round %d)', $chars, $round));
+                }
+
+                $now = microtime(true);
+                if ($now - $lastBeatAt < $beatInterval) {
+                    return;
+                }
+                $lastBeatAt = $now;
+
+                // Any streamed output is activity on both sides of the wire.
+                $stepBudget->touch($now);
+
+                try {
+                    $client->reportProgress($taskId, $stepId);
+                } catch (HttpException $e) {
+                    // Losing a beat only risks the controller's backstop
+                    // firing; it is never fatal (and a 401/409 here means the
+                    // step is already decided — the next call will surface it).
+                    $output->writeln(sprintf('<comment>Progress beat failed (%d): %s</comment>', $e->status, $e->getMessage()));
+                }
+            };
+
             $response = $llm->chat(
                 $budget->pruneHistory($messages, $this->toolSchemaTokens($tools)),
                 $tools,
                 [
                     'stream' => $llmStream,
-                    // Progress hook: only live when the operator asks for it
-                    // (-v / -vv); zero cost otherwise.
-                    'on_chunk' => static function (int $chars) use ($output, $round): void {
-                        if ($output->isVerbose()) {
-                            $output->writeln(sprintf('  streamed %d chars (round %d)', $chars, $round));
-                        }
-                    },
+                    'on_chunk' => $onChunk,
                 ],
             );
+
+            // Bytes arrived, so the idle clock has been refreshed on both
+            // sides; the e2e clock is untouched.
+            $stepBudget->touch();
+
             $messages[] = [
                 'role' => 'assistant',
                 'content' => $response['content'],
                 'tool_calls' => $response['tool_calls'],
             ];
+
+            // The stream was cut short by a budget tripwire. Keep whatever
+            // arrived and stop: the partial output is the whole point
+            // (§3.4/§3.5).
+            if (($response['truncated'] ?? false) === true) {
+                $partialReason = (string) ($response['reason'] ?? 'budget exhausted');
+                if ('' !== $response['content']) {
+                    $result = ['summary' => $response['content']];
+                }
+                break;
+            }
 
             $toolCalls = $response['tool_calls'];
             if ([] === $toolCalls) {
@@ -380,6 +480,13 @@ final class RunCommand extends Command
             }
 
             foreach ($toolCalls as $toolCall) {
+                // Check before EVERY tool call: a long tool chain must not
+                // push us past the deadline without a chance to submit.
+                if ($stepBudget->shouldStop()) {
+                    $partialReason = $stepBudget->reason();
+                    break 2;
+                }
+
                 $fn = is_array($toolCall['function'] ?? null) ? $toolCall['function'] : [];
                 $toolName = (string) ($fn['name'] ?? '');
                 $callId = (string) ($toolCall['id'] ?? '');
@@ -401,6 +508,9 @@ final class RunCommand extends Command
                     $output->writeln(sprintf('Running internal tool %s', $toolName));
                     $callResult = $internalTools->get($toolName)->run($args);
 
+                    // Tool work is step activity on the controller too.
+                    $stepBudget->touch();
+
                     try {
                         $client->logInternalToolCall(
                             $eventId,
@@ -415,6 +525,7 @@ final class RunCommand extends Command
                 } elseif ($this->isKnownTool($tools, $toolName)) {
                     // External tool → forward to TaskWeaver with the event key.
                     $output->writeln(sprintf('Calling external tool %s', $toolName));
+                    $stepBudget->touch();
                     try {
                         $callResult = $client->callTool($taskId, $eventId, $eventKey, $toolName, $args, null);
                     } catch (HttpException $e) {
@@ -449,8 +560,23 @@ final class RunCommand extends Command
         }
 
         // Submit the step result (revokes all event keys for this step).
-        $client->complete($taskId, $stepId, $result);
-        $output->writeln('<info>Step completed</info>');
+        // A budget-truncated step is COMPLETED, not failed: failure semantics
+        // persist no result, which would discard the partial output we just
+        // fought to keep (docs/step-liveness-plan.md §3.5).
+        //
+        // A 401/409 here means the controller already decided this step (the
+        // deadline landed, or it completed elsewhere) — HttpException
+        // propagates so the outer loop applies abandon-on-denial.
+        $client->complete($taskId, $stepId, $result, null !== $partialReason ? [
+            'partial' => true,
+            'reason' => $partialReason,
+        ] : []);
+
+        if (null !== $partialReason) {
+            $output->writeln(sprintf('<comment>Step completed PARTIAL: %s</comment>', $partialReason));
+        } else {
+            $output->writeln('<info>Step completed</info>');
+        }
     }
 
     /**
@@ -534,12 +660,22 @@ final class RunCommand extends Command
             $stepResult = $step['result'] ?? null;
 
             if ('completed' === $status && null !== $stepResult) {
-                $entries[] = [
+                $entry = [
                     'tool_name' => 'step/'.$i,
                     'arguments' => ['step' => $i, 'name' => $name],
                     'result' => $stepResult,
                     'status' => 'completed',
                 ];
+
+                // The step hit a budget and submitted what it had. Flag it in
+                // the envelope so the final step does not treat a truncated
+                // input as whole (docs/step-liveness-plan.md §3.5).
+                if (($step['partial'] ?? false) === true) {
+                    $entry['partial'] = true;
+                    $entry['note'] = sprintf('step "%s" was truncated before it finished; its result is incomplete', $name);
+                }
+
+                $entries[] = $entry;
             } else {
                 $entries[] = [
                     'tool_name' => 'step/'.$i,

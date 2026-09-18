@@ -126,10 +126,12 @@ class Event
 
     public function hasValidKey(DateTimeImmutable $now): bool
     {
-        // Key is valid only while the step is running and within its deadline.
+        // Key is valid only while the step is running and within BOTH
+        // deadlines — the end-to-end budget and the rolling idle budget
+        // (docs/step-liveness-plan.md §3.6). One predicate, both clocks.
         return null !== $this->apiKey
             && Step::STATUS_RUNNING === $this->step->getStatus()
-            && !$this->step->isExpired($now);
+            && !$this->step->isStale($now);
     }
 
     public function getType(): string

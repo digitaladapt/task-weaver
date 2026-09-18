@@ -29,6 +29,7 @@ final class ToolProxyService
         private readonly McpClientRegistry $mcpRegistry,
         private readonly ToolResolver $toolResolver,
         private readonly LoggerInterface $logger,
+        private readonly ?TaskWorkflowService $workflow = null,
     ) {
     }
 
@@ -168,6 +169,18 @@ final class ToolProxyService
         $logEvent->setPayload($payload);
         $logEvent->setRunId($event->getStep()->getRunId());
         $this->em->persist($logEvent);
+        $this->refreshIdleClock($event);
         $this->em->flush();
+    }
+
+    /**
+     * Tool activity is step activity: roll the step's idle deadline forward
+     * (docs/step-liveness-plan.md §3.1). A long tool call is thus never
+     * mistaken for a stalled worker — the clock is refreshed when the call is
+     * requested AND when it finishes.
+     */
+    private function refreshIdleClock(Event $event): void
+    {
+        $this->workflow?->touchActivity($event->getStep());
     }
 }

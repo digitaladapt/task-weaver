@@ -191,6 +191,7 @@ final class SeedCommand extends Command
         $step2a->setStartedAt($t0);
         $step2a->setFinishedAt($t4);
         $step2a->setExpiresAt($t0->modify('+600 seconds'));
+        $step2a->setIdleExpiresAt($t3->modify('+120 seconds'));
         $step2a->setResult([
             'location' => 'London',
             'temperature_c' => 17,
@@ -233,6 +234,7 @@ final class SeedCommand extends Command
         $step2b->setStartedAt($t5);
         $step2b->setFinishedAt($t7);
         $step2b->setExpiresAt($t5->modify('+600 seconds'));
+        $step2b->setIdleExpiresAt($t6->modify('+120 seconds'));
         $step2b->setResult([
             'brief' => 'London: 17°C, partly cloudy, 62% humidity. No coat needed.',
         ]);
@@ -316,6 +318,7 @@ final class SeedCommand extends Command
         $step3->setStartedAt($u0);
         $step3->setFinishedAt($u5);
         $step3->setExpiresAt($u0->modify('+600 seconds'));
+        $step3->setIdleExpiresAt($u4->modify('+120 seconds'));
         $step3->setResult(null);
 
         $this->makeEvent($step3, Event::TYPE_STEP_STARTED, $worker, [

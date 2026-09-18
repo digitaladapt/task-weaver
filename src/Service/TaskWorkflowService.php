@@ -38,6 +38,8 @@ final class TaskWorkflowService
         private readonly SchedulerService $scheduler,
         private readonly ConversationService $conversations,
         private readonly int $stepTimeout = 600,
+        private readonly int $idleTimeout = 120,
+        private readonly int $grace = 15,
     ) {
     }
 
@@ -68,7 +70,9 @@ final class TaskWorkflowService
             $step->setStartedAt(null);
             $step->setFinishedAt(null);
             $step->setExpiresAt(null);
+            $step->setIdleExpiresAt(null);
             $step->setResult(null);
+            $step->setPartial(false);
             $step->setRunId(null);
             $this->em->persist($step);
         }
@@ -106,7 +110,11 @@ final class TaskWorkflowService
 
         $step->setStatus(Step::STATUS_RUNNING);
         $step->setStartedAt(new DateTimeImmutable());
+        // Two clocks (docs/step-liveness-plan.md §3.1): the e2e budget is
+        // stamped once and never refreshed; the idle budget is rolled forward
+        // by every activity via touchActivity().
         $step->setExpiresAt((new DateTimeImmutable())->modify(sprintf('+%d seconds', $this->stepTimeout)));
+        $step->setIdleExpiresAt((new DateTimeImmutable())->modify(sprintf('+%d seconds', $this->idleTimeout)));
         // Mint the run id BEFORE the step_started event is logged (and before
         // the first llm_call is registered) so EVERY event of this execution
         // — including step_started — carries it (docs/conversations-plan.md §4).
@@ -116,6 +124,9 @@ final class TaskWorkflowService
         $this->em->flush();
 
         $payload = ['expires_at' => $step->getExpiresAt()?->format('c')];
+        if (null !== $step->getIdleExpiresAt()) {
+            $payload['idle_expires_at'] = $step->getIdleExpiresAt()->format('c');
+        }
         if (null !== $model && '' !== $model) {
             $payload['model'] = $model;
         }
@@ -141,9 +152,96 @@ final class TaskWorkflowService
         $event->setApiKey(KeyGenerator::generate());
         $event->setRunId($step->getRunId());
         $this->em->persist($event);
+        $this->touchActivity($step);
         $this->em->flush();
 
         return $event;
+    }
+
+    /**
+     * Roll the step's IDLE deadline forward: now + idle-timeout.
+     *
+     * The invariant (docs/step-liveness-plan.md §3.1): any activity on a
+     * running step refreshes the idle clock. It NEVER touches `expires_at` —
+     * the end-to-end budget is absolute and cannot be extended by activity.
+     *
+     * Two cases do NOT roll the clock:
+     *  - a non-running step — completing/failing is terminal, and a stray
+     *    event must not resurrect a deadline it no longer has;
+     *  - an already-STALE step — its fate is sealed. Without this, a zombie
+     *    worker could keep any event-writing route alive (e.g. internal tool
+     *    logging) and roll its own idle clock forward forever, dodging the
+     *    very reaping the clock exists to trigger. Freezing on staleness is
+     *    what keeps the deadline authoritative rather than self-serve.
+     *
+     * Callers persist (they are always already mid-flush).
+     */
+    public function touchActivity(Step $step): void
+    {
+        if (Step::STATUS_RUNNING !== $step->getStatus()) {
+            return;
+        }
+
+        if ($step->isStale(new DateTimeImmutable())) {
+            return;
+        }
+
+        $step->setIdleExpiresAt((new DateTimeImmutable())->modify(sprintf('+%d seconds', $this->idleTimeout)));
+        $this->em->persist($step);
+    }
+
+    /**
+     * Record a worker progress beat: proof of life while the worker is
+     * receiving a streamed LLM response (docs/step-liveness-plan.md §3.5a).
+     *
+     * Deliberately writes NO event row — a beat is a clock refresh, not an
+     * observation; logging one per beat would flood the audit trail for no
+     * informational gain. Returns the refreshed deadline so the worker can
+     * re-arm its local clock from the authoritative value.
+     *
+     * @throws LogicException when the step is not running (terminal) — the
+     *                        caller maps this to 409 so the worker abandons
+     */
+    public function recordProgress(Step $step): void
+    {
+        if (Step::STATUS_RUNNING !== $step->getStatus()) {
+            throw new LogicException(sprintf('Cannot record progress for step %s: status is %s, expected running.', $step->getId()->toRfc4122(), $step->getStatus()));
+        }
+
+        if ($step->isStale(new DateTimeImmutable())) {
+            throw new LogicException(sprintf('Cannot record progress for step %s: it has expired (%s).', $step->getId()->toRfc4122(), $step->staleReason(new DateTimeImmutable())));
+        }
+
+        $this->touchActivity($step);
+        $this->em->flush();
+    }
+
+    /**
+     * The step's remaining budgets, for the worker (docs/step-liveness-plan.md §3.3).
+     *
+     * Durations, not timestamps: worker and controller are separate
+     * containers with independent wall clocks, so "you have N seconds left"
+     * survives skew where an absolute deadline would not. `e2e_remaining` is
+     * derived from the stamped deadline, so it absorbs any delay between
+     * stamping and the worker receiving it.
+     *
+     * @return array{e2e_remaining: int, idle_timeout: int, grace: int}
+     */
+    public function budgetFor(Step $step): array
+    {
+        $now = new DateTimeImmutable();
+        $remaining = 0;
+        if (null !== $step->getExpiresAt()) {
+            $remaining = max(0, $step->getExpiresAt()->getTimestamp() - $now->getTimestamp());
+        }
+
+        return [
+            'e2e_remaining' => $remaining,
+            'idle_timeout' => $this->idleTimeout,
+            // The head start the worker should take on both clocks, so it
+            // aborts in time to still transmit partial results.
+            'grace' => $this->grace,
+        ];
     }
 
     /**
@@ -153,21 +251,40 @@ final class TaskWorkflowService
      *     final step claimable if all siblings are done (task → ready);
      *   - when this was the final step, marks the task completed.
      */
-    public function completeStep(Step $step, Worker $worker, array $result): void
+    public function completeStep(Step $step, Worker $worker, array $result, bool $partial = false, string $reason = ''): void
     {
         if (Step::STATUS_RUNNING !== $step->getStatus()) {
             throw new LogicException(sprintf('Cannot complete step %s: status is %s, expected running.', $step->getId()->toRfc4122(), $step->getStatus()));
+        }
+
+        // §3.7: a step past EITHER deadline is already decided server-side.
+        // Accepting its result would let a zombie worker write after the
+        // controller declared it stale, making the idle clock advisory
+        // instead of real (SPEC.md → Stale Step Expiry: denial spans
+        // "any rejected tool call, status transition, or complete").
+        $now = new DateTimeImmutable();
+        if ($step->isStale($now)) {
+            throw new LogicException(sprintf('Cannot complete step %s: it has expired (%s).', $step->getId()->toRfc4122(), $step->staleReason($now)));
         }
 
         // Revoke every event key for this step (success or failure).
         $this->em->getRepository(Event::class)->revokeKeysForStep($step->getId()->toRfc4122());
 
         $step->setResult($result);
+        $step->setPartial($partial, '' !== $reason ? $reason : null);
         $step->setStatus(Step::STATUS_COMPLETED);
         $step->setFinishedAt(new DateTimeImmutable());
         $this->em->persist($step);
 
-        $this->log(Event::TYPE_STEP_COMPLETED, $step, $worker, ['result' => $result]);
+        // A truncated-but-completed step records the marker so the audit trail
+        // (and the final-step envelope) is honest that this result is
+        // incomplete (docs/step-liveness-plan.md §3.5).
+        $completedPayload = ['result' => $result];
+        if ($partial) {
+            $completedPayload['partial'] = true;
+            $completedPayload['reason'] = '' !== $reason ? $reason : 'partial result';
+        }
+        $this->log(Event::TYPE_STEP_COMPLETED, $step, $worker, $completedPayload);
 
         $task = $step->getTask();
 
@@ -244,6 +361,12 @@ final class TaskWorkflowService
             throw new LogicException(sprintf('Cannot fail step %s: status is %s.', $step->getId()->toRfc4122(), $step->getStatus()));
         }
 
+        // NOTE: no stale guard here, deliberately. This method is the
+        // terminal state transition for lazy expiry too (expireStaleSteps()
+        // calls it with an already-stale step), so a deadline check would
+        // make expiry unable to do its job. Worker-reported failures that
+        // arrive late are harmless: the step is already failed either way.
+
         $this->em->getRepository(Event::class)->revokeKeysForStep($step->getId()->toRfc4122());
 
         $step->setStatus(Step::STATUS_FAILED);
@@ -276,9 +399,10 @@ final class TaskWorkflowService
     }
 
     /**
-     * Lazy expiry: mark every stale `running` step (expires_at < now) as
-     * failed with a worker-timeout reason. Called on the way to doing other
-     * work (e.g. from the scheduler / claim path).
+     * Lazy expiry: mark every stale `running` step as failed with a reason
+     * naming the clock that tripped — the end-to-end deadline or the rolling
+     * idle deadline (docs/step-liveness-plan.md §3.6). Called on the way to
+     * doing other work (e.g. from the scheduler / claim path).
      */
     public function expireStaleSteps(): void
     {
@@ -303,7 +427,9 @@ final class TaskWorkflowService
             if ($worker instanceof Worker) {
                 // failStep() already flows the failure into onStepTerminal()
                 // for reply tasks (materialize failure + hard-delete).
-                $this->failStep($step, $worker, 'worker timeout: step expired at '.$step->getExpiresAt()?->format('c'));
+                // staleReason() names the clock that tripped so the audit
+                // trail distinguishes an absolute-deadline hit from a stall.
+                $this->failStep($step, $worker, 'worker timeout: '.$step->staleReason($now));
             } else {
                 // No worker recorded — mark it failed directly; the failure
                 // still flows into cleanup below. Flush before that cleanup:

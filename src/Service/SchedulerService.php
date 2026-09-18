@@ -75,7 +75,9 @@ final class SchedulerService
             $step->setStartedAt(null);
             $step->setFinishedAt(null);
             $step->setExpiresAt(null);
+            $step->setIdleExpiresAt(null);
             $step->setResult(null);
+            $step->setPartial(false);
             $this->em->persist($step);
         }
     }

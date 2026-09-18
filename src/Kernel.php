@@ -54,7 +54,52 @@ class Kernel extends BaseKernel
             $this->assertProdSecretIsReal('TASKWEAVER_ENROLLMENT_TOKEN', (string) ($_SERVER['TASKWEAVER_ENROLLMENT_TOKEN'] ?? ''), 24);
         }
 
+        // Two-clock step liveness must be a coherent ladder
+        // (docs/step-liveness-plan.md §3.8). A misconfigured pair silently
+        // disables a clock (or makes the worker's head start non-positive),
+        // so refuse to boot instead of degrading quietly. Checked in EVERY
+        // env: the failure is a logic error, not a secret. Values default to
+        // the committed .env.dev/.env.test pair when unset.
+        $this->assertLivenessTimeoutsAreCoherent();
+
         parent::boot();
+    }
+
+    /**
+     * The liveness ladder: grace < idle_timeout < step_timeout.
+     *
+     * - grace >= idle_timeout → the worker's idle window is non-positive, so
+     *   it would abort instantly on every step;
+     * - idle_timeout >= step_timeout → the idle clock can never trip first
+     *   and the setting is a silent no-op.
+     */
+    private function assertLivenessTimeoutsAreCoherent(): void
+    {
+        $stepTimeout = $this->intEnv('TASKWEAVER_STEP_TIMEOUT', 600);
+        $idleTimeout = $this->intEnv('TASKWEAVER_STEP_IDLE_TIMEOUT', 120);
+        $grace = $this->intEnv('TASKWEAVER_STEP_GRACE', 15);
+
+        if ($stepTimeout <= 0 || $idleTimeout <= 0 || $grace < 0) {
+            throw new RuntimeException(sprintf('TaskWeaver refused to boot: step liveness timeouts must be positive (TASKWEAVER_STEP_TIMEOUT=%d, TASKWEAVER_STEP_IDLE_TIMEOUT=%d, TASKWEAVER_STEP_GRACE=%d).', $stepTimeout, $idleTimeout, $grace));
+        }
+
+        if ($grace >= $idleTimeout) {
+            throw new RuntimeException(sprintf('TaskWeaver refused to boot: TASKWEAVER_STEP_GRACE (%ds) must be smaller than TASKWEAVER_STEP_IDLE_TIMEOUT (%ds) — otherwise the worker has no idle window and would abort every step immediately.', $grace, $idleTimeout));
+        }
+
+        if ($idleTimeout >= $stepTimeout) {
+            throw new RuntimeException(sprintf('TaskWeaver refused to boot: TASKWEAVER_STEP_IDLE_TIMEOUT (%ds) must be smaller than TASKWEAVER_STEP_TIMEOUT (%ds) — otherwise the idle clock can never trip first and the setting is a silent no-op.', $idleTimeout, $stepTimeout));
+        }
+    }
+
+    private function intEnv(string $name, int $default): int
+    {
+        $raw = $_SERVER[$name] ?? $_ENV[$name] ?? getenv($name);
+        if (false === $raw || null === $raw || '' === $raw) {
+            return $default;
+        }
+
+        return (int) $raw;
     }
 
     private function assertProdSecretIsReal(string $name, string $value, int $minLength): void

@@ -63,8 +63,10 @@ class StepRepository extends ServiceEntityRepository
      * Eligibility per SPEC.md (Stale Step Expiry):
      *   - a step that is `pending` and not yet started (the final step only
      *     becomes eligible once its non-final siblings are finished), or
-     *   - a step stuck `running` past its `expires_at` (stale → handled by
-     *     the caller by failing it then re-selecting).
+     *   - a step stuck `running` past EITHER deadline (stale → handled by
+     *     the caller by failing it then re-selecting): the end-to-end budget
+     *     (`expires_at`) or the rolling idle budget (`idle_expires_at`),
+     *     see docs/step-liveness-plan.md §3.6.
      *
      * Claim matching is capability-based (SPEC.md → Claiming & Matching):
      * the worker must cover the step's SANDBOX capability tags (terminal,
@@ -86,7 +88,7 @@ class StepRepository extends ServiceEntityRepository
         $candidates = $this->createQueryBuilder('s')
             ->select('s', 't')
             ->join('s.task', 't')
-            ->where('s.status = :pending OR (s.status = :running AND s.expiresAt < :now)')
+            ->where('s.status = :pending OR (s.status = :running AND (s.expiresAt < :now OR s.idleExpiresAt < :now))')
             ->andWhere('t.status = :taskStatus')
             ->andWhere('t.deletedAt IS NULL')
             ->andWhere('t.conversationId IS NULL')
@@ -154,7 +156,7 @@ class StepRepository extends ServiceEntityRepository
         $candidates = $this->createQueryBuilder('s')
             ->select('s', 't')
             ->join('s.task', 't')
-            ->where('s.status = :pending OR (s.status = :running AND s.expiresAt < :now)')
+            ->where('s.status = :pending OR (s.status = :running AND (s.expiresAt < :now OR s.idleExpiresAt < :now))')
             ->andWhere('t.status = :taskStatus')
             ->andWhere('t.deletedAt IS NULL')
             ->andWhere('t.conversationId IS NOT NULL OR t.compactionConversationId IS NOT NULL')
@@ -184,14 +186,16 @@ class StepRepository extends ServiceEntityRepository
     }
 
     /**
-     * Find a stale-running step by expires_at, for lazy expiry.
+     * Find a stale-running step by either deadline, for lazy expiry
+     * (docs/step-liveness-plan.md §3.6). `Step::staleReason()` reports which
+     * clock tripped, so the failure reason is accurate rather than generic.
      */
     public function findStaleRunning(DateTimeImmutable $now): array
     {
         return $this->createQueryBuilder('s')
             ->join('s.task', 't')
             ->where('s.status = :running')
-            ->andWhere('s.expiresAt < :now')
+            ->andWhere('s.expiresAt < :now OR s.idleExpiresAt < :now')
             ->andWhere('t.deletedAt IS NULL')
             ->setParameter('running', Step::STATUS_RUNNING)
             ->setParameter('now', $now)

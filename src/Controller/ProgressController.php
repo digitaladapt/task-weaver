@@ -8,10 +8,7 @@ use App\Entity\Worker;
 use App\Repository\StepRepository;
 use App\Service\TaskWorkflowService;
 use App\Service\WorkerAuthService;
-
-use function is_array;
-use function is_string;
-
+use DateTimeImmutable;
 use LogicException;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -19,11 +16,25 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
 
+/**
+ * Worker progress beats (docs/step-liveness-plan.md §3.5a).
+ *
+ * While the worker is receiving a streamed LLM response it periodically
+ * reports "still working" for the step. Each beat rolls the step's rolling
+ * IDLE deadline forward, so the controller can tell a healthy-but-slow
+ * generation (chunks flowing → beats keep coming) from a dead worker
+ * (beats stop → the idle clock lands).
+ *
+ * This is deliberately NOT a bare keepalive: it fires only while the worker
+ * is demonstrably making progress, carries no state, and writes no event row
+ * — a beat is a clock refresh, not an observation. The worker treats it as
+ * best-effort: a failed beat is logged and ignored, never fatal to the step.
+ */
 #[Route('/api/worker')]
-final class StepCompleteController extends AbstractController
+final class ProgressController extends AbstractController
 {
-    #[Route('/step/{taskId}/{stepId}/complete', name: 'worker_step_complete', methods: ['POST'])]
-    public function complete(
+    #[Route('/progress/{taskId}/{stepId}', name: 'worker_step_progress', methods: ['POST'])]
+    public function progress(
         string $taskId,
         string $stepId,
         Request $request,
@@ -43,31 +54,22 @@ final class StepCompleteController extends AbstractController
             return $this->json(['error' => 'Step not found for this task'], Response::HTTP_NOT_FOUND);
         }
 
-        $payload = json_decode((string) $request->getContent(), true) ?? [];
-        $result = is_array($payload['result'] ?? null) ? $payload['result'] : [];
-
-        // A truncated-but-completed step (docs/step-liveness-plan.md §3.5):
-        // the worker ran out of budget mid-generation and is submitting what
-        // it has. Recorded on the step_completed event so the audit trail is
-        // honest about it, and so the final-step envelope can carry the
-        // marker through to the consumer.
-        $partial = ($payload['partial'] ?? false) === true;
-        $reason = is_string($payload['reason'] ?? null) ? $payload['reason'] : '';
+        // A beat is only meaningful for a step that is still alive. Once it
+        // is stale, the deadline has passed — no beat may resurrect it.
+        if ($step->isStale(new DateTimeImmutable())) {
+            return $this->json(['error' => 'Step has expired'], Response::HTTP_CONFLICT);
+        }
 
         try {
-            $workflow->completeStep($step, $worker, $result, $partial, $reason);
+            $workflow->recordProgress($step);
         } catch (LogicException $e) {
             return $this->json(['error' => $e->getMessage()], Response::HTTP_CONFLICT);
         }
 
-        // (Reply-task materialization + hard-delete happens inside
-        // TaskWorkflowService::completeStep — docs/conversations-plan.md §5.1.)
-
         return $this->json([
             'ok' => true,
-            'status' => 'completed',
-            'task_status' => $step->getTask()->getStatus(),
-            'partial' => $partial,
+            'step_id' => $step->getId()->toRfc4122(),
+            'idle_expires_at' => $step->getIdleExpiresAt()?->format('c'),
         ]);
     }
 }

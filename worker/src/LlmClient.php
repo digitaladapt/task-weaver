@@ -19,6 +19,7 @@ use function sprintf;
 use function str_replace;
 use function strlen;
 use stdClass;
+use function strpos;
 use function substr;
 
 use Symfony\Component\HttpClient\HttpClient;
@@ -26,6 +27,7 @@ use Symfony\Contracts\HttpClient\ChunkInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Throwable;
 
+use function microtime;
 use function usleep;
 
 /**
@@ -78,6 +80,43 @@ final class LlmClient
 
     /** @var callable(int): void|null */
     private $onChunk;
+
+    /**
+     * Seconds of stream silence tolerated before the call is abandoned and
+     * its partial output salvaged (docs/step-liveness-plan.md §3.4).
+     * INF = never abort (keeps historic behaviour for callers that don't arm it).
+     *
+     * This is pushed down to the transport as the request's `timeout` option:
+     * Symfony reports a socket that has been quiet for that long as an
+     * isTimeout() chunk, so the transport's own timer is the stall signal.
+     * Counting those chunks is exact and testable, whereas polling our own
+     * wall clock would drift and could not be driven deterministically.
+     */
+    private float $idleAbortSeconds = \INF;
+
+    /** Absolute instant past which a still-running generation is abandoned (e2e − grace). */
+    private ?float $e2eAbortAt = null;
+
+    /**
+     * Arm the stream idle detector: a stalled stream (no bytes for this many
+     * seconds) is abandoned and whatever the model produced is returned with
+     * `truncated: true` — NOT retried. A stall is not a transient failure, and
+     * burning retries on it would spend the very budget we are protecting.
+     */
+    public function setIdleAbortSeconds(float $seconds): void
+    {
+        $this->idleAbortSeconds = $seconds > 0 ? $seconds : \INF;
+    }
+
+    /**
+     * Arm the absolute tripwire: a generation that is still running at this
+     * instant is abandoned even if chunks are still flowing (a verbose model
+     * can outrun the e2e clock without ever stalling).
+     */
+    public function setE2eAbortAt(?float $timestamp): void
+    {
+        $this->e2eAbortAt = $timestamp;
+    }
 
     /**
      * @param array{retries?: int, backoff_base_ms?: int, full_endpoint?: bool} $options
@@ -183,6 +222,17 @@ final class LlmClient
                 return $stream
                     ? $this->postStreaming($payload)
                     : $this->postOnce($payload);
+            } catch (LlmAbortException $e) {
+                // Ran out of budget (idle stall or hard deadline). Not
+                // transient: salvage what arrived and report it as truncated
+                // output (§3.4).
+                return [
+                    'content' => $e->partialContent ?? '',
+                    'tool_calls' => $this->assembleToolCalls($e->partialToolCalls ?? []),
+                    'usage' => [],
+                    'truncated' => true,
+                    'reason' => $e->getMessage(),
+                ];
             } catch (LlmTransientException $e) {
                 if ($attempt >= $maxAttempts) {
                     // On last retry, return any partial content/tool-calls the
@@ -256,8 +306,9 @@ final class LlmClient
      *
      * @return array{content: string, tool_calls: array<int, mixed>, usage?: array<string, int>}
      *
-     * @throws LlmTransientException on transport errors / 5xx / 429 (retryable)
-     * @throws RuntimeException      on permanent failures (bad request, malformed response)
+     * @throws LlmAbortException      when the step's budget runs out mid-stream (partial output attached)
+     * @throws LlmTransientException  on transport errors / 5xx / 429 (retryable)
+     * @throws RuntimeException       on permanent failures (bad request, malformed response)
      */
     private function postStreaming(array $payload): array
     {
@@ -270,7 +321,10 @@ final class LlmClient
             'headers' => $headers,
             'json' => $payload,
             'buffer' => false,
-            'timeout' => 300,
+            // The idle window doubles as the transport idle timeout: Symfony
+            // yields an isTimeout() chunk when the socket has been quiet for
+            // this long, which is our stall signal (§3.4).
+            'timeout' => \INF === $this->idleAbortSeconds ? 300 : $this->idleAbortSeconds,
         ]);
 
         $content = '';
@@ -284,9 +338,30 @@ final class LlmClient
         $sseBuffer = '';
         $streamError = '';
 
+        // Stall / deadline watchdogs (docs/step-liveness-plan.md §3.4).
+        // Symfony reports a stalled stream as isTimeout() chunks rather than
+        // throwing, so the FIRST such chunk means the socket has been quiet for
+        // the whole idle window — abandon and salvage.
+        $stalledChunks = 0;
+
         try {
             foreach ($this->http->stream($response) as $chunk) {
                 if (!$chunk instanceof ChunkInterface) {
+                    continue;
+                }
+
+                if ($chunk->isTimeout()) {
+                    ++$stalledChunks;
+                    if (1 === $stalledChunks) {
+                        // Quiet for the full idle window: a stall, not a slow
+                        // model. Retrying would repeat the same silence.
+                        throw new LlmAbortException(
+                            sprintf('idle timeout: LLM silent %.0fs', \INF === $this->idleAbortSeconds ? 0 : $this->idleAbortSeconds),
+                            $content,
+                            $toolCallDeltas,
+                        );
+                    }
+
                     continue;
                 }
 
@@ -309,6 +384,20 @@ final class LlmClient
                     break;
                 }
 
+                // Bytes arrived — reset the stall counter.
+                $stalledChunks = 0;
+
+                // Absolute tripwire: a verbose model can outrun the e2e clock
+                // without ever stalling. Checked as chunks arrive so we stop
+                // promptly rather than at the next frame boundary.
+                if (null !== $this->e2eAbortAt && microtime(true) >= $this->e2eAbortAt) {
+                    throw new LlmAbortException(
+                        'step deadline reached mid-generation',
+                        $content,
+                        $toolCallDeltas,
+                    );
+                }
+
                 $data = $chunk->getContent();
                 if ('' === $data) {
                     continue;
@@ -328,6 +417,11 @@ final class LlmClient
                     $this->consumeSseFrame($frame, $content, $toolCallDeltas, $usage, $finishReason, $sawDataFrame, $streamError);
                 }
             }
+        } catch (LlmAbortException $e) {
+            // Budget gone: cancel so no zombie connection keeps streaming,
+            // then let postWithRetry() salvage the partial output.
+            $response->cancel();
+            throw $e;
         } catch (Throwable $e) {
             // Transport error mid-stream — cancel and carry partial state
             // for the caller to salvage on last-retry fallback.

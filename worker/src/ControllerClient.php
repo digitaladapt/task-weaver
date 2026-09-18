@@ -121,6 +121,13 @@ final class ControllerClient
      * The optional $model (per-step selection or the worker's resolved
      * default) rides along so the controller records it on the step_started
      * event payload (provenance, M5b).
+     *
+     * The response carries the controller's `budget` block (remaining e2e
+     * seconds, the idle window, and the grace the worker should keep in
+     * reserve) — see StepBudget, which arms the worker's local clocks from
+     * it (docs/step-liveness-plan.md §3.3).
+     *
+     * @return array<string, mixed>
      */
     public function markRunning(string $taskId, string $stepId, ?string $model = null): array
     {
@@ -147,14 +154,45 @@ final class ControllerClient
     }
 
     /**
+     * POST /api/worker/progress/{taskId}/{stepId} — Tier-1.
+     *
+     * Report "still working" while streamed LLM output is flowing, so the
+     * controller's rolling idle clock keeps moving and a healthy-but-slow
+     * generation is not mistaken for a dead worker
+     * (docs/step-liveness-plan.md §3.5a).
+     *
+     * Best-effort by design: the caller swallows failures, because losing a
+     * beat only risks the controller's backstop firing late — it must never
+     * fail the step.
+     *
+     * @return array<string, mixed>
+     */
+    public function reportProgress(string $taskId, string $stepId): array
+    {
+        return $this->request('POST', sprintf('/api/worker/progress/%s/%s', urlencode($taskId), urlencode($stepId)));
+    }
+
+    /**
      * POST /api/worker/step/{taskId}/{stepId}/complete — Tier-1.
      *
+     * When a budget ran out mid-step, the result is submitted as COMPLETED
+     * with `partial: true` + a `reason` rather than as a failure: failure
+     * semantics persist no result, which would discard exactly the partial
+     * output we are trying to save (docs/step-liveness-plan.md §3.5).
+     *
      * @param array<string, mixed> $result
+     * @param array{partial?: bool, reason?: string} $meta
      */
-    public function complete(string $taskId, string $stepId, array $result): array
+    public function complete(string $taskId, string $stepId, array $result, array $meta = []): array
     {
+        $json = ['result' => $result];
+        if (($meta['partial'] ?? false) === true) {
+            $json['partial'] = true;
+            $json['reason'] = (string) ($meta['reason'] ?? 'partial result');
+        }
+
         return $this->request('POST', sprintf('/api/worker/step/%s/%s/complete', urlencode($taskId), urlencode($stepId)), [
-            'json' => ['result' => $result],
+            'json' => $json,
         ]);
     }
 
