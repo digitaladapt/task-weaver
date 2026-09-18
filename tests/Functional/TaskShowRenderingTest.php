@@ -11,6 +11,7 @@ use App\Entity\Worker;
 
 use function assert;
 
+use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
@@ -112,6 +113,77 @@ final class TaskShowRenderingTest extends WebTestCase
 
         // JSON view uses wrapping class (no horizontal scroll).
         self::assertStringContainsString('json-block', $html);
+    }
+
+    public function testStepShowsBothClocksAndIdleCountdown(): void
+    {
+        $task = new Task('Liveness display', 'Two clocks on the step card.');
+        $task->setStatus(Task::STATUS_RUNNING);
+        $this->em->persist($task);
+
+        $step = new Step('Long step', 'Currently running.');
+        $step->setSortOrder(0);
+        $step->setStatus(Step::STATUS_RUNNING);
+        $step->setExpiresAt(new DateTimeImmutable('+10 minutes'));
+        $step->setIdleExpiresAt(new DateTimeImmutable('+90 seconds'));
+        $task->addStep($step);
+        $this->em->flush();
+
+        $this->client->request('GET', '/tasks/'.$task->getId()->toRfc4122());
+
+        self::assertResponseIsSuccessful();
+        $html = (string) $this->client->getResponse()->getContent();
+
+        // Both clocks are surfaced, so an operator can tell a slow-but-alive
+        // step (idle keeps moving) from a wedged one (idle converges on
+        // deadline).
+        self::assertStringContainsString('deadline ', $html);
+        self::assertStringContainsString('idle until ', $html);
+        self::assertStringContainsString('s of quiet left', $html);
+    }
+
+    public function testStepShowsPartialBadgeWithReason(): void
+    {
+        $task = new Task('Truncated task', 'A step hit a budget.');
+        $task->setStatus(Task::STATUS_COMPLETED);
+        $this->em->persist($task);
+
+        $step = new Step('Truncated step', 'Ran out of budget.');
+        $step->setSortOrder(0);
+        $step->setStatus(Step::STATUS_COMPLETED);
+        $step->setResult(['summary' => 'Half an answer']);
+        $step->setPartial(true, 'idle timeout: LLM silent 105s');
+        $task->addStep($step);
+        $this->em->flush();
+
+        $this->client->request('GET', '/tasks/'.$task->getId()->toRfc4122());
+
+        self::assertResponseIsSuccessful();
+        $html = (string) $this->client->getResponse()->getContent();
+
+        self::assertStringContainsString('partial</span>', $html);
+        // The reason rides in the tooltip so the operator can see WHY without
+        // digging through the event log.
+        self::assertStringContainsString('idle timeout: LLM silent 105s', $html);
+    }
+
+    public function testOrdinaryStepHasNoPartialBadge(): void
+    {
+        $task = new Task('Normal task', 'Nothing truncated.');
+        $task->setStatus(Task::STATUS_COMPLETED);
+        $this->em->persist($task);
+
+        $step = new Step('Normal step', 'Finished cleanly.');
+        $step->setSortOrder(0);
+        $step->setStatus(Step::STATUS_COMPLETED);
+        $step->setResult(['summary' => 'Whole answer']);
+        $task->addStep($step);
+        $this->em->flush();
+
+        $this->client->request('GET', '/tasks/'.$task->getId()->toRfc4122());
+
+        $html = (string) $this->client->getResponse()->getContent();
+        self::assertStringNotContainsString('>partial<', $html);
     }
 
     public function testNoScriptDangerFromPayload(): void

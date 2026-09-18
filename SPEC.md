@@ -79,7 +79,10 @@ All tunable settings — timeouts (including the step timeout), context limits, 
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `TASKWEAVER_STEP_TIMEOUT` | `600` | Seconds a step may stay `running` before it's considered expired. Used to set `Step.expires_at` when the step is marked running; enforced **lazily** — see Stale Step Expiry. |
+| `TASKWEAVER_STEP_TIMEOUT` | `600` | **End-to-end** budget: seconds a step may stay `running` before it's considered expired. Used to set `Step.expires_at` when the step is marked running — **absolute, never refreshed**. Enforced **lazily**; the worker is also given the remaining budget so it can stop gracefully — see Stale Step Expiry. |
+| `TASKWEAVER_STEP_IDLE_TIMEOUT` | `120` | **Idle** budget: max seconds of silence between activities for a `running` step. Sets `Step.idle_expires_at`, which is **rolled forward** by every recorded activity (event registration, tool calls, internal tool logs, worker progress beats). Catches a *stall* — a wedged worker or a silent LLM — without punishing a slow-but-alive step. |
+| `TASKWEAVER_STEP_GRACE` | `15` | Head start the worker takes: it self-aborts at `deadline − grace` so it still has time to transmit a partial result before the controller starts rejecting writes. |
+| `TASKWEAVER_STEP_PROGRESS_INTERVAL` | `0` (auto) | Minimum seconds between worker progress beats while streamed output is flowing. `0` derives it from the idle budget. |
 | `TASKWEAVER_CONTEXT_REQUEST_SIZE` / `TASKWEAVER_CONTEXT_OUTPUT_BUFFER` | `6000` / `1500` | Step context budget (`max-context = request-size + output-buffer-size`). |
 | `TASKWEAVER_LLM_MAX_CONCURRENCY` | `1` | Worker's LLM-call concurrency limit, issued to the worker in its config. |
 | `TASKWEAVER_LLM_URL` | `http://llm:8080/v1` | Base URL of the LLM. For an **unauthenticated** local endpoint the worker talks to it directly (private Docker network). For an endpoint that needs an API key (external provider or keyed LAN proxy) this is the upstream the **controller** proxies to — the worker instead gets the controller's `/api/worker/llm` URL. Issued via provision `config` (`llm_url`). |
@@ -187,7 +190,10 @@ Security model: the API key moves from "one per local network" to "one per provi
 | `is_final` | boolean | Marks the consuming step. Only required structural flag — see Flow Shapes |
 | `status` | enum | `pending`, `running`, `completed`, `failed` |
 | `started_at` / `finished_at` | datetime/null | |
-| `expires_at` | datetime/null | **Deadline set when the step is marked `running`: `now + step-timeout`** (env var, default 600s). A stale `running` step (`expires_at < now`) is expired lazily on the next lookup — see Stale Step Expiry. Also gates the step's event keys. |
+| `expires_at` | datetime/null | **Absolute deadline set when the step is marked `running`: `now + step-timeout`** (env var, default 600s). Never refreshed. A stale `running` step (`expires_at < now`) is expired lazily on the next lookup — see Stale Step Expiry. Also gates the step's event keys. |
+| `idle_expires_at` | datetime/null | **Rolling deadline** set when the step is marked `running`, and **pushed forward by every recorded activity** (event registration, tool calls, internal tool logs, worker progress beats): `now + step-idle-timeout` (default 120s). A step is stale when *either* clock has passed — see Stale Step Expiry. |
+| `partial` | bool | True when the result was **truncated by a budget** rather than the worker finishing normally. The step is still `completed` (failure persists no result, which would discard the salvaged output), but consumers — including the final step's input — are told the input is incomplete. |
+| `partial_reason` | string/null | The worker's own account of the truncation, e.g. `idle timeout: LLM silent 105s`. NULL unless `partial`. |
 
 **Flow shapes** (only two are allowed):
 - **Single step**: the step is both first and final; runs alone, no inputs from siblings.
@@ -200,7 +206,7 @@ Security model: the API key moves from "one per local network" to "one per provi
 | `step_id` | FK → Step | Always associated with a step |
 | `task_id` | FK → Task | Denormalized for query convenience |
 | `worker_id` | FK → Worker | Who generated it |
-| `api_key` | string | **Event-scoped API key** returned to the worker; authorizes tool calls for this event only. Valid only while the step is `running` **and** `now < step.expires_at`. **Revoked when the worker submits the step's result (success or failure), and dead at the step deadline** (expired → 401). |
+| `api_key` | string | **Event-scoped API key** returned to the worker; authorizes tool calls for this event only. Valid only while the step is `running` **and** not stale (neither clock passed). **Revoked when the worker submits the step's result (success or failure), and dead at the step deadline** (expired → 401). |
 | `type` | string | Discriminator for the kind of event — see Event Logging |
 | `payload` | JSON | Free-form event data (structured by worker) |
 | `timestamp` | datetime | |
@@ -315,7 +321,7 @@ Worker → TaskWeaver  POST /api/worker/tool/{taskId}/{eventId}
         ▼
 TaskWeaver:
   1. Resolve event_api_key → Event → Step. (403 if the key is unknown or expired)
-  2. Validate the event belongs to the task & the step is currently running **and not expired** (`now < step.expires_at`; expired → 401).
+  2. Validate the event belongs to the task & the step is currently running **and not stale** (neither clock passed; stale → 401).
   3. Validate tool: tool_name must match a ToolDef whose tags intersect the step's tags.
        └─ reject with 403 if not allowed
   4. Look up ToolDef → McpServer → credential env-vars (resolved from TaskWeaver's env).
@@ -414,14 +420,35 @@ The final step consumes this envelope in one shot, exactly as if it had issued t
 
 ## Stale Step Expiry (v1 — lazy)
 
-When the worker marks a step `running`, the controller stamps `expires_at = now + step-timeout` (env var `TASKWEAVER_STEP_TIMEOUT`). No background job, no keepalive beats — **option 1: dead simple, lazy cleanup**. Stale `running` steps are fixed *on the way to doing other work*:
+Each `running` step carries **two clocks**, both stamped when the worker marks it running:
+
+| clock | field | reset by | catches |
+|---|---|---|---|
+| **end-to-end** | `expires_at` = `now + step_timeout` | nothing (absolute) | a step that runs too long overall |
+| **idle** | `idle_expires_at` = `now + step_idle_timeout` | any activity: event registration, tool calls, internal tool logs, worker progress beats | a step that has *stopped making progress* |
+
+A step is **stale** when *either* clock has passed. No background job, no keepalive beats — **option 1: dead simple, lazy cleanup**. Stale `running` steps are fixed *on the way to doing other work*:
 
 - **The step-selection query handles expiry.** Instead of a separate sweeper, "find steps to run" becomes:
-  `queued OR (running AND expires_at < now)`
-  A stale step that comes back in that set is immediately transitioned: mark `failed`, write an `error: worker timeout` event (`type = step_failed`).
-- **Event keys are gated by the same timestamp.** An event key resolves to `Event → Step`; a tool call is only authorized while `now < step.expires_at` and the step is `running`. Past the deadline the call is rejected as **unauthorized (401)** — so a zombie worker that finally wakes up and posts its results or a late `complete` is rejected, and it can't trigger side effects or write results after the deadline.
-- **Shape resolution still proceeds.** Once the stale step is marked `failed`, the flow resolves exactly like any failure: the final step (if any) becomes eligible and consumes the failure as a failed tool-call result.
-- **The worker abandons on denial.** A worker that gets a **401/403** against this step's event key or status transitions has just discovered the deadline passed (or the step completed elsewhere) — it must **stop working the step immediately and drop it**. No retry, no LLM loop, no result report. The step's fate is already decided server-side; the worker just cleans up its local state and moves on to the next claim. Span of denial: any rejected tool call, status transition, or `complete` — not just timeouts.
+  `queued OR (running AND (expires_at < now OR idle_expires_at < now))`
+  A stale step that comes back in that set is immediately transitioned: mark `failed`, write an `error` event (`type = step_failed`) naming **which** clock tripped (`worker timeout: step expired at …` vs `worker idle timeout: no activity since …`).
+- **Event keys are gated by staleness.** An event key resolves to `Event → Step`; a tool call is only authorized while the step is `running` **and** not stale. Past either deadline the call is rejected as **unauthorized (401)**.
+- **Staleness freezes activity.** An activity route on a stale step does **not** roll the idle clock — otherwise a zombie worker could keep a dead step nominally alive forever by hammering that route, dodging the very reaping the clock exists to trigger. Once stale, a step accepts nothing but the expiry sweep.
+- **`complete` and status transitions honour the deadline.** Both are gated on the same staleness check and reject with **409** past either clock, so a zombie worker cannot write results after the controller has declared the step stale.
+- **The worker abandons on denial.** A worker that gets a **401/403** against this step's event key or status transitions has just discovered the deadline passed (or the step completed elsewhere) — it must **stop working the step immediately and drop it**. No retry, no LLM loop, no result report. Span of denial: any rejected tool call, status transition, or `complete` — not just timeouts.
+
+### Worker cooperation (why the idle clock is not just a reaper)
+
+The worker is told its budget, so the common failure mode is a **graceful partial** rather than an abrupt 401 that loses the work:
+
+- `markRunning` / status responses carry a `budget` block — `e2e_remaining`, `idle_timeout`, `grace`. Durations, **not** timestamps: worker and controller are separate containers with independent wall clocks, so "N seconds left" survives skew where an absolute deadline would not.
+- The worker self-arms both clocks (`deadline − grace`) and stops early enough to transmit.
+- While streamed output is flowing, the worker sends **progress beats** (`POST /api/worker/progress/{task}/{step}`) so the controller's rolling idle clock keeps moving. This is what lets a healthy-but-slow generation be distinguished from a dead worker: chunks flowing → beats keep arriving; chunks stop → the clock runs out. A beat refreshes the idle deadline and writes **no** event row.
+- **`partial` results are `completed`, not `failed`.** A worker that runs out of budget submits what it has with `partial: true` + a `reason`. Failure semantics persist **no result**, which would discard exactly the partial output we are trying to save. The marker is recorded on the `step_completed` event and carried into the final step's input, so a downstream consumer knows the input is incomplete.
+- Worker-side clocks are **cooperative, never authoritative** — a malicious worker can ignore them. The controller's deadlines remain the enforcement.
+
+**Not** a keepalive: a bare `ping` on a timer (nothing happening, just "still here") remains rejected. A progress beat fires only while work is demonstrably happening, carries no state, and writes no event row.
+
 - **Option 2 (future):** a periodic sweeper event that sleeps until the next expected TTL expiry (max 5 min) and proactively fixes status + revokes tokens. This keeps the selection query simple and moves the cleanup to a targeted job. Deferred to the next version — for now the lazy query does the work.
 
 ## Scheduling
@@ -522,10 +549,12 @@ The step editor enforces the two valid shapes (single step, or all-parallel + on
 | 12 | Workspace | Persisted per-task workspace so a task can work on code across claims (no re-clone). Scoped, capacity-limited, tied to the worker. |
 | 13 | Fetch semantics | `fetch` is **fetch-anything** (URL + optional sha256) proxied by TaskWeaver; **every call audited with URL + resulting hash**. |
 | 14 | Config source | **Environment variables** everywhere. `symfony/dotenv` is a **dev-only dependency**; production uses real env vars. |
-| 15 | Stale step expiry | **Lazy (option 1):** `Step.expires_at = now + step-timeout` at running; the selection query handles expiry (`queued OR running AND expires_at < now`); event keys gated by the same deadline. Periodic sweeper (option 2) deferred to next version. |
+| 15 | Stale step expiry | **Lazy (option 1):** two clocks stamped at running — `expires_at` (absolute, e2e) and `idle_expires_at` (rolling, refreshed by activity). *Either* passing makes the step stale; the selection query handles expiry; event keys gated by the same check; `complete`/status transitions 409 past it; activity routes refuse to roll a stale step's clock. Periodic sweeper (option 2) deferred to next version. |
 | 16 | Worker on denial | A worker that gets a **401/403** on this step (tool call, status, or `complete`) **abandons the step immediately** — no retry, no LLM loop, no result report; it drops local state and moves to the next claim. Denial = the step's fate is already decided server-side. |
 | 17 | LLM auth / external LLMs | **Controller-mediated proxy.** When a provider key is configured, the worker's LLM traffic is proxied through TaskWeaver's `/api/worker/llm`; the worker never holds the key and never needs egress. Unauthenticated local LLMs stay direct. v1 streams by default (SSE relay; non-streaming JSON relay kept for legacy callers). |
 | 18 | LLM model selection | v1 = **one controller-wide provider/model**. Named **model types** (`fast`/`coder`/`abliterated`/…) selectable at task/step level is a **v2** direction (see § LLM channel). |
+| 19 | Step idle clock vs. keepalive beats | **Idle clock + progress beats, not a keepalive.** `idle_expires_at` rolls forward on *recorded activity*; a bare periodic ping is still rejected (decision #15's "no keepalive beats" stands — it was about a timer kept alive for its own sake). A progress beat is different: it fires only while streamed output is demonstrably flowing, carries no state, and writes no event row. This replaces a guessed "LLM allowance" with a measured one. |
+| 20 | Budget-truncated steps | **`completed` with `partial: true`**, not `failed`. Failure semantics persist no result, which would throw away the partial output the whole mechanism exists to save; the final step decides how to present an incomplete input, exactly as it already does for a failed one. |
 
 ## v2 Roadmap (intent, not scope)
 

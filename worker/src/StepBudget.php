@@ -78,29 +78,45 @@ final class StepBudget
      * @param array<string, mixed> $statusResponse  the markRunning/status body
      * @param array<string, mixed> $provisionConfig controller-issued worker config,
      *                                              the fallback when the budget block is absent
+     * @param array<string, mixed> $overrides       operator overrides (CLI/env) that win over
+     *                                              everything — the existing resolveVar chain:
+     *                                              step_timeout / step_idle_timeout / step_grace
      */
-    public static function fromStatusResponse(array $statusResponse, array $provisionConfig = [], ?float $now = null): self
+    public static function fromStatusResponse(array $statusResponse, array $provisionConfig = [], ?float $now = null, array $overrides = []): self
     {
         $now ??= microtime(true);
 
         $budget = is_array($statusResponse['budget'] ?? null) ? $statusResponse['budget'] : [];
 
-        // Prefer the per-step budget block; fall back to the provision-issued
-        // values (an older controller sends neither, in which case the
-        // built-in defaults apply and the clocks still work approximately).
-        $idleTimeout = self::number($budget['idle_timeout'] ?? null)
+        // Precedence mirrors RunCommand::resolveVar: an explicit operator
+        // override (CLI/env) beats the controller, which beats the provision
+        // config, which beats the built-in default. The override exists so an
+        // operator can make a specific worker MORE conservative locally (or
+        // reproduce a deadline in a test) without reconfiguring the fleet;
+        // it is a courtesy knob, not a security boundary — the controller's
+        // deadlines stay authoritative (§3.9).
+        $idleTimeout = self::number($overrides['step_idle_timeout'] ?? null)
+            ?? self::number($budget['idle_timeout'] ?? null)
             ?? self::number($provisionConfig['step_idle_timeout'] ?? null)
             ?? self::DEFAULT_IDLE_TIMEOUT;
 
-        $grace = self::number($budget['grace'] ?? null)
+        $grace = self::number($overrides['step_grace'] ?? null)
+            ?? self::number($budget['grace'] ?? null)
             ?? self::number($provisionConfig['step_grace'] ?? null)
             ?? self::DEFAULT_GRACE;
 
         // e2e_remaining is derived controller-side from the stamped deadline,
         // so it already absorbs the delay between stamping and us reading it.
+        // An explicit override is a whole window, not a remainder, so it can
+        // only shorten what the controller already allowed.
         $e2eRemaining = self::number($budget['e2e_remaining'] ?? null)
             ?? self::number($provisionConfig['step_timeout'] ?? null)
             ?? self::DEFAULT_STEP_TIMEOUT;
+
+        $overrideE2e = self::number($overrides['step_timeout'] ?? null);
+        if (null !== $overrideE2e) {
+            $e2eRemaining = min($e2eRemaining, $overrideE2e);
+        }
 
         $grace = max(0.0, $grace);
 

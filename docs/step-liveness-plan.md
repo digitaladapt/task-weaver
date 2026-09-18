@@ -1,6 +1,6 @@
 # Step Liveness — Two-Clock Deadlines & Cooperative Worker Abort
 
-**Status:** Phase 1 ✓ implemented · Phase 2 ✓ implemented (branch `feature/step-liveness-clocks`) · Phase 3 partially done · 2026-09-17
+**Status:** Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ (except SPEC/WORKER prose extras) · Phase 4 ✓ e2e-verified (branch `feature/step-liveness-clocks`) · 2026-09-17
 **Issue:** *(TBD)*
 **Interlocks:** SPEC.md §Configuration / §Stale Step Expiry · WORKER.md §9 + decision #4 · `mcp-progress-plan.md` §3.4 (timeout ladder) · `docs/model-selection-plan.md` §5.1 (config precedence)
 
@@ -280,17 +280,31 @@ Symfony's own `isTimeout()` chunk *is* the signal. That is exact, needs no
 polling, and is deterministically testable with `MockResponse` ("yielding an
 empty string simulates an idle timeout").
 
-### Phase 3 — Surfacing
+### Phase 3 — Surfacing ✓ implemented
 
-1. Admin task/step detail: show both deadlines and the idle-since derivation. *(pending)*
-2. Final-step envelope: carry `partial: true` / `reason` on the entry so the final step knows an input is incomplete. ✓ (step.partial → fetch payload → envelope `partial` + `note`)
-3. Docs: SPEC.md §Configuration + §Stale Step Expiry + decisions log; WORKER.md §9 + decision #4; `.env.example` / `.env.dev` / `.env.test`. *(env done; SPEC/WORKER pending)*
+1. Admin task/step detail: both deadlines plus a live "N s of quiet left" countdown, and a `partial` badge carrying the worker's reason. ✓
+2. Final-step envelope: `step.partial` → fetch payload → envelope entry gains `partial: true` + a `note`, so the final step knows an input is incomplete. ✓
+3. Docs: SPEC.md §Configuration + §Stale Step Expiry + decisions log (19, 20); WORKER.md §9 + §7 endpoints + decision rows 4/8; `.env.example` / `.env.dev` / `.env.test`. ✓
 
-### Phase 4 — Verification
+### Phase 4 — Verification ✓ e2e-verified
 
-1. Extend `dev/mock-llm.php` (or add `dev/mock-llm-stall.php`) with a mode that emits N tokens then stalls indefinitely — the e2e rig for the "1m55s of silence" case.
-2. Manual e2e: seeded task + stalling fake → worker aborts at ~`idle − grace`, completes partial; controller timeline shows `step_completed` with `partial: true`.
+1. `dev/mock-llm.php` gained a `stall_after` mode: emit the content, then go
+   silent for N seconds and hang up without `[DONE]` — the "model wedged
+   mid-generation" case. ✓
+2. Manual e2e (seeded task + stalling mock): ✓ **verified**. With
+   `TASKWEAVER_STEP_IDLE_TIMEOUT=20` / `TASKWEAVER_STEP_GRACE=5` the worker
+   logged `Clocks armed: idle 20s, e2e 594s, grace 5s`, streamed the partial
+   content, then self-aborted at exactly 15s of silence (20 − 5) and wrote
+   `status=completed partial=true reason="idle timeout: LLM silent 15s"`
+   with the salvaged text preserved, and the matching `step_completed`
+   payload carrying `partial: true`.
 
+The e2e also caught a real gap the unit tests could not: the operator
+override chain (`--step-idle-timeout` / `TASKWEAVER_STEP_IDLE_TIMEOUT`) was
+specified in this plan but not wired, so a worker silently ignored it. Now
+implemented and covered by `StepBudgetTest`. Overrides can only make a worker
+*more* conservative — the e2e override is clamped with `min()` so it can
+never extend the controller's absolute window.
 ---
 
 ## 6. Testing

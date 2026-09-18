@@ -24,6 +24,14 @@ declare(strict_types=1);
  *       worker requested stream:true; if the worker didn't request
  *       streaming, the same entry is emitted as a plain JSON response.
  *
+ *   { "content": "partial…", "stall_after": 3 }
+ *     → emit the content, then go SILENT (no frames, no [DONE]) for
+ *       `stall_after` seconds and hang up. Exercises the worker's idle
+ *       watchdog: it should abort, salvage the partial content, and submit
+ *       the step as `partial: true` (docs/step-liveness-plan.md §3.4/§3.5).
+ *       Any positive value works; a large one (60) models an indefinitely
+ *       wedged model without freezing the test run.
+ *
  * Script file path comes from MOCK_LLM_SCRIPT env var, or defaults to
  * dev/mock-llm-script.json. The script auto-repeats its last entry when
  * exhausted (so long loops can be simulated); POST /__reset restarts the
@@ -127,7 +135,7 @@ $content = $entry['content'] ?? '';
 $userStream = ($body['stream'] ?? false) === true;
 
 if ($userStream) {
-    stream_entry($content, $toolCalls, $body);
+    stream_entry($content, $toolCalls, $body, $entry);
 }
 
 // Non-streaming: standard JSON response.
@@ -188,6 +196,16 @@ function stream_content(string $content, array $fullBody, array $request): never
         ]));
     }
 
+    // Stall mode: emit what we have, then go silent and hang up — no
+    // [DONE], no usage frame. This is the "model accepted the request and
+    // went quiet" case the worker's idle watchdog exists to catch.
+    $stallAfter = $fullBody['stall_after'] ?? null;
+    if (is_numeric($stallAfter) && (float) $stallAfter > 0) {
+        @ob_flush();
+        sleep((int) ceil((float) $stallAfter));
+        exit;
+    }
+
     sse_data((string) json_encode([
         'id' => $id,
         'object' => 'chat.completion.chunk',
@@ -207,7 +225,7 @@ function stream_content(string $content, array $fullBody, array $request): never
  * @param array<int, array<string, mixed>> $toolCalls
  * @param array<string, mixed>             $request the worker's chat payload
  */
-function stream_entry(string $content, array $toolCalls, array $request): never
+function stream_entry(string $content, array $toolCalls, array $request, array $entry = []): never
 {
     http_response_code(200);
     header('Content-Type: text/event-stream');
@@ -219,7 +237,12 @@ function stream_entry(string $content, array $toolCalls, array $request): never
     $created = time();
 
     if ($toolCalls === []) {
-        stream_content($content, ['id' => $id, 'created' => $created], $request);
+        // Carry stall_after through so a content entry can hang mid-stream.
+        $fullBody = ['id' => $id, 'created' => $created];
+        if (isset($entry['stall_after'])) {
+            $fullBody['stall_after'] = $entry['stall_after'];
+        }
+        stream_content($content, $fullBody, $request);
     }
 
     foreach ($toolCalls as $index => $call) {

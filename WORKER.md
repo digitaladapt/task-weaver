@@ -391,8 +391,9 @@ durable history is TaskWeaver's event + ToolCall records.
 | POST | `/api/worker/tool/{taskId}/{eventId}` | **event key** | Forward an external tool call; TaskWeaver validates + executes + records |
 | POST | `/api/worker/tool/internal` | worker key | Log a worker-executed internal tool call |
 | POST | `/api/worker/llm` | worker key | Proxy an LLM chat-completions payload to the keyed/external LLM; only issued when the provider needs a key |
-| PATCH | `/api/worker/step/{taskId}/{stepId}/status` | worker key | `running` / `failed` transitions |
-| POST | `/api/worker/step/{taskId}/{stepId}/complete` | worker key | Submit step result; **revokes every event key for that step**; resolves the shape |
+| PATCH | `/api/worker/step/{taskId}/{stepId}/status` | worker key | `running` / `failed` transitions; **response carries the `budget` block** the worker arms its clocks from |
+| POST | `/api/worker/progress/{taskId}/{stepId}` | worker key | **Progress beat** while streamed output flows: refreshes the idle deadline, writes no event row |
+| POST | `/api/worker/step/{taskId}/{stepId}/complete` | worker key | Submit step result (`partial: true` + `reason` when truncated by a budget); **revokes every event key for that step**; resolves the shape; **409 past either clock** |
 
 > No `release` endpoint and no retries in v1 — failure flows forward. What
 > closes a *stale* `running` step is the lazy deadline in §9.
@@ -419,7 +420,9 @@ durable history is TaskWeaver's event + ToolCall records.
     //   "llm_auth": { "type": "proxy", "provider": "openai" },
     "llm_model": "Qwen3.5-4B",               // TASKWEAVER_LLM_MODEL, controller env var
     "system_prompt_override": null,
-    "step_timeout": 600   // TASKWEAVER_STEP_TIMEOUT, controller env var
+    "step_timeout": 600,        // TASKWEAVER_STEP_TIMEOUT — absolute e2e budget (s)
+    "step_idle_timeout": 120,   // TASKWEAVER_STEP_IDLE_TIMEOUT — rolling silence budget (s)
+    "step_grace": 15            // TASKWEAVER_STEP_GRACE — stop this early to still transmit
     "context": { "request_size": 6000, "output_buffer_size": 1500 },
     "llm_max_concurrency": 1
   }
@@ -615,24 +618,61 @@ default.)
 
 ### Stale `running` steps — lazy expiry (option 1, v1)
 
-When the worker marks a step `running`, the controller stamps
-`step.expires_at = now + step-timeout` (from controller config, an env var,
-default 600s). Everything else is **lazy** — no keepalive beats, no periodic
-sweeper:
+Each step carries **two clocks**, both stamped by the controller when the
+worker marks it `running`:
+
+| clock | field | reset by | catches |
+|---|---|---|---|
+| **end-to-end** | `expires_at` | nothing (absolute) | a step that runs too long overall |
+| **idle** | `idle_expires_at` | any recorded activity | a step that has *stopped making progress* |
+
+A step is **stale** when either clock has passed. Everything else is **lazy**
+— no periodic sweeper:
 
 - **The selection query handles expiry.** "Find steps to run" is
-  `queued OR (running AND expires_at < now)`. A stale step that surfaces in
-  that set is immediately transitioned: mark `failed`, record an
-  `error: worker timeout` event (`type = step_failed`).
-- **Event keys are gated by the same timestamp.** An event key resolves to
+  `queued OR (running AND (expires_at < now OR idle_expires_at < now))`. A
+  stale step that surfaces in that set is immediately transitioned: mark
+  `failed`, record an event (`type = step_failed`) naming which clock tripped.
+- **Event keys are gated by staleness.** An event key resolves to
   `Event → Step`; a tool call is authorized only while the step is `running`
-  **and** `now < step.expires_at`. Past the deadline the call is rejected as
+  **and** not stale. Past either deadline the call is rejected as
   **unauthorized (401)** — a zombie worker that finally wakes up and sends a
   tool call or a late `complete` is rejected, so it can't write results or
-  trigger side effects after the deadline.
-- **Shape resolution still proceeds.** Once the stale step is marked
-  `failed`, the flow resolves like any failure: the final step (if any)
-  becomes eligible and consumes the failure as a failed tool-call result.
+  trigger side effects after the deadline. `complete` and status transitions
+  reject with **409** on the same check.
+- **Staleness freezes activity.** An activity route on a stale step does not
+  roll the idle clock, so a zombie worker cannot keep a dead step alive by
+  hammering it.
+
+#### The worker is given its budget (cooperation, not just reaping)
+
+The controller reports the remaining budget in the `markRunning` response
+(`budget`: `e2e_remaining` / `idle_timeout` / `grace` — **durations**, not
+timestamps, because the two containers have independent wall clocks). The
+worker:
+
+1. arms both clocks at `deadline − grace`, so it stops early enough to
+   transmit what it has;
+2. sends **progress beats** (`POST /api/worker/progress/{task}/{step}`) while
+   streamed LLM output is flowing — throttled, best-effort, and writing no
+   event row — so the controller's idle clock keeps moving for a
+   healthy-but-slow generation;
+3. aborts a stalled stream and keeps the partial content (`truncated`);
+4. submits the result as `completed` with `partial: true` + `reason`.
+
+The grace margin is what keeps step 4 off the happy path: the worker submits
+~`grace` seconds before the controller's deadline, so it is normally well
+inside when it does.
+
+**A stall is not retried.** Retrying a silent model repeats the same silence
+and spends the budget the clocks exist to protect; truncation is a terminal
+outcome for a step, not a transient failure.
+
+These worker-side clocks are **cooperative, never authoritative** — a
+malicious worker can ignore them, and the controller's deadlines remain the
+enforcement. They exist so the common failure mode is a graceful partial
+instead of a 401 that loses the work.
+
 - **The worker abandons on denial.** A worker that gets a **401/403** against
   this step's event key or its status transitions has just discovered the
   deadline passed — it must **stop working the step immediately and drop
@@ -649,7 +689,9 @@ Keeps the selection query simple, moves cleanup to a targeted job. Deferred
 
 The distinctive property either way: we don't try to keep a hung worker
 honest with beats; we simply make its credentials worthless past the
-deadline.
+deadline. What the worker *can* do, while it is still alive, is stop itself `grace`
+seconds early and hand back a partial — the controller stays the final
+authority either way.
 
 ---
 
@@ -677,11 +719,11 @@ deadline.
 | 1 | Worker language | **PHP 8.4 + Symfony**, single stack with the controller. task-loop = reference for loop mechanics only. |
 | 2 | Bootstrap auth | One-time **enrollment token** injected at spawn → provision. Realistically one worker. |
 | 3 | LLM channel | Local LLM on the **private Docker network** is a trusted channel. Controller on same net + second NIC for public admin UI. |
-| 4 | Stale `running` step | **Lazy expiry:** controller stamps `expires_at = now + step-timeout` at `running`; selection query handles it (`queued OR running AND expires_at < now`); event keys gated by the same deadline; late responses rejected unauthorized. No keepalive beats. |
+| 4 | Stale `running` step | **Lazy expiry with two clocks:** controller stamps `expires_at` (absolute e2e) and `idle_expires_at` (rolling, refreshed by recorded activity) at `running`; either clock passing makes the step stale; event keys gated by the same check; `complete` rejects past it. No keepalive beats — a progress beat is emitted only while output is demonstrably flowing, writes no event row, and refreshes the idle clock. |
 | 5 | Concurrency | Multiple tasks and multiple steps per task run concurrently; **LLM-call concurrency limited** (config, default 1). |
 | 6 | System prompt | **Static, loaded into memory at boot**, overrideable via controller config. Grounding generated on the fly. |
 | 7 | Internal-tool gating | Open set — step `tags` gate external ToolDefs only (matches controller). |
-| 8 | Event-key TTL | Revoke on `complete` **and** dead at `step.expires_at`. (No separate sliding TTL in v1.) |
+| 8 | Event-key TTL | Revoke on `complete` **and** dead at the step deadline (either clock). (No separate sliding TTL in v1.) |
 | 9 | `/tool` idempotency | `idempotency_key` per tool call; TaskWeaver dedupes keyed by event. |
 | 10 | Tool-call execution | **Sync-only** in v1; async/streaming tool results deferred. **LLM responses stream** (SSE) end-to-end — the provider-to-worker path (and the controller proxy relay) is streamed; tool *execution* remains sync. |
 | 11 | Fetch | Proxied `fetch` tool through TaskWeaver; every call audited with URL + hash. |

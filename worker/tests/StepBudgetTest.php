@@ -118,6 +118,45 @@ final class StepBudgetTest extends TestCase
         self::assertSame(600.0 - 15.0, $budget->e2eRemainingSeconds(0.0));
     }
 
+    public function testOperatorOverrideWinsOverTheController(): void
+    {
+        // An operator can make a specific worker MORE conservative than the
+        // fleet: the override beats both the controller's budget block and
+        // the provision config (mirrors RunCommand::resolveVar).
+        $budget = StepBudget::fromStatusResponse(
+            ['budget' => ['e2e_remaining' => 600, 'idle_timeout' => 120, 'grace' => 15]],
+            ['step_idle_timeout' => 120, 'step_grace' => 15],
+            0.0,
+            ['step_idle_timeout' => 20, 'step_grace' => 5],
+        );
+
+        self::assertSame(20.0, $budget->idleTimeout());
+        self::assertSame(5.0, $budget->grace());
+        // Idle window = 20 − 5 = 15s, not the controller's 105s.
+        self::assertSame(15.0, $budget->idleWindowSeconds());
+    }
+
+    public function testE2eOverrideCanOnlyShortenTheControllersWindow(): void
+    {
+        // A "whole window" override must never EXTEND the remaining budget —
+        // the controller's absolute deadline stays authoritative.
+        $extending = StepBudget::fromStatusResponse(
+            ['budget' => ['e2e_remaining' => 60, 'idle_timeout' => 120, 'grace' => 10]],
+            [],
+            0.0,
+            ['step_timeout' => 600],
+        );
+        self::assertSame(50.0, $extending->e2eRemainingSeconds(0.0), 'a larger override must not extend the window');
+
+        $shortening = StepBudget::fromStatusResponse(
+            ['budget' => ['e2e_remaining' => 600, 'idle_timeout' => 120, 'grace' => 10]],
+            [],
+            0.0,
+            ['step_timeout' => 90],
+        );
+        self::assertSame(80.0, $shortening->e2eRemainingSeconds(0.0), 'a smaller override shortens it');
+    }
+
     public function testDisabledBudgetNeverTrips(): void
     {
         $budget = StepBudget::disabled(0.0);

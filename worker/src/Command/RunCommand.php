@@ -74,7 +74,10 @@ final class RunCommand extends Command
             ->addOption('llm-model', null, InputOption::VALUE_REQUIRED, 'Local LLM model')
             ->addOption('once', null, InputOption::VALUE_NONE, 'Claim and run one task, then exit')
             ->addOption('max-rounds', null, InputOption::VALUE_REQUIRED, 'Max LLM rounds per step')
-            ->addOption('llm-stream', null, InputOption::VALUE_REQUIRED, 'Enable SSE streaming from the LLM (1/0)');
+            ->addOption('llm-stream', null, InputOption::VALUE_REQUIRED, 'Enable SSE streaming from the LLM (1/0)')
+            ->addOption('step-idle-timeout', null, InputOption::VALUE_REQUIRED, 'Override the idle (silence) budget in seconds — must be lower than the controller\'s')
+            ->addOption('step-timeout', null, InputOption::VALUE_REQUIRED, 'Override the end-to-end budget in seconds — can only shorten the controller\'s window')
+            ->addOption('step-grace', null, InputOption::VALUE_REQUIRED, 'Override the grace period (seconds kept in reserve for transmitting)');
     }
 
     /* order of resolution:
@@ -162,6 +165,23 @@ final class RunCommand extends Command
         // use max_rounds from controller unless explicit worker override
         $maxRounds = (int) $this->resolveVar($input, 'max-rounds', 'TASKWEAVER_MAX_ROUNDS', (string) self::MAX_LLM_ROUNDS, $config['max_rounds'] ?? null);
 
+        // Operator clock overrides (CLI > env), mirroring resolveVar. These
+        // win over the controller-issued budget so an operator can make this
+        // worker MORE conservative than the fleet — never less: the
+        // controller's deadlines stay authoritative (plan §3.9).
+        $budgetOverrides = [];
+        foreach (['step-idle-timeout' => 'step_idle_timeout', 'step-timeout' => 'step_timeout', 'step-grace' => 'step_grace'] as $opt => $key) {
+            $envName = 'TASKWEAVER_'.strtoupper(str_replace('-', '_', $opt));
+            if ($input->hasParameterOption('--'.$opt)) {
+                $budgetOverrides[$key] = (string) $input->getOption($opt);
+                continue;
+            }
+            $envValue = getenv($envName);
+            if (false !== $envValue && '' !== $envValue) {
+                $budgetOverrides[$key] = (string) $envValue;
+            }
+        }
+
         $once = (bool) $input->getOption('once');
 
         // A relative issued URL (proxy mode: '/api/worker/llm') resolves
@@ -245,7 +265,7 @@ final class RunCommand extends Command
             $output->writeln(sprintf('Claimed task %s step %s', $taskId, $stepId));
 
             try {
-                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $stepModel, $modelOverride, $llmModel, $maxRounds, $llmStream, $config, $output);
+                $this->runStep($client, $llm, $internalTools, $budget, $systemPromptOverride, $taskId, $stepId, $stepModel, $modelOverride, $llmModel, $maxRounds, $llmStream, $config, $budgetOverrides, $output);
             } catch (HttpException $e) {
                 if ($e->isDenial()) {
                     // Abandon-on-denial: the step's fate is already decided
@@ -286,6 +306,7 @@ final class RunCommand extends Command
         int $maxRounds,
         bool $llmStream,
         array $provisionConfig,
+        array $budgetOverrides,
         OutputInterface $output,
     ): void {
         // Fetch task + schema, then mark running.
@@ -307,6 +328,8 @@ final class RunCommand extends Command
         $stepBudget = StepBudget::fromStatusResponse(
             $client->markRunning($taskId, $stepId, $effectiveModel),
             $provisionConfig,
+            null,
+            $budgetOverrides,
         );
 
         // The LLM stream aborts on the same clocks the loop checks, so a

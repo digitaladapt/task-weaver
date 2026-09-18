@@ -51,7 +51,10 @@
                 <div class="step-box {{ step.isFinal ? 'final' : '' }}">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
                         <strong>{{ step.name }}</strong>
-                        <span class="badge status-{{ step.status }}">{{ step.status }}</span>
+                        <span>
+                            {% if step.partial %}<span class="badge bg-yellow" title="Truncated: {{ step.partialReason }}">partial</span>{% endif %}
+                            <span class="badge status-{{ step.status }}">{{ step.status }}</span>
+                        </span>
                     </div>
                     <div class="muted" style="margin-top:4px;">{{ step.description }}</div>
                     <div style="margin-top:6px;">
@@ -61,8 +64,27 @@
                     <div class="muted" style="margin-top:4px; font-size:12px;">
                         {% if step.startedAt %}started {{ step.startedAt|date('Y-m-d H:i') }}{% endif %}
                         {% if step.finishedAt %} · finished {{ step.finishedAt|date('Y-m-d H:i') }}{% endif %}
-                        {% if step.expiresAt %} · expires {{ step.expiresAt|date('Y-m-d H:i') }}{% endif %}
                     </div>
+                    {# Two clocks (docs/step-liveness-plan.md): the absolute e2e deadline
+                       and the rolling idle one. A step that is alive but slow keeps
+                       pushing idle forward; one that is wedged does not — so the two
+                       together distinguish "slow" from "dead". #}
+                    {% if step.expiresAt or step.idleExpiresAt %}
+                        <div class="muted" style="margin-top:2px; font-size:12px;">
+                            {% if step.expiresAt %}deadline {{ step.expiresAt|date('Y-m-d H:i:s') }}{% endif %}
+                            {% if step.idleExpiresAt %}
+                                {% if step.expiresAt %} · {% endif %}idle until {{ step.idleExpiresAt|date('Y-m-d H:i:s') }}
+                            {% endif %}
+                            {% if step.status == 'running' and step.idleExpiresAt %}
+                                {% set idleLeft = step.idleExpiresAt.timestamp - date().timestamp %}
+                                {% if idleLeft >= 0 %}
+                                    ({{ idleLeft }}s of quiet left)
+                                {% else %}
+                                    <span style="color:var(--red);">(idle window passed)</span>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                    {% endif %}
                     {% if step.result %}
                         <details style="margin-top:6px;">
                             <summary class="muted" style="cursor:pointer;">result</summary>
