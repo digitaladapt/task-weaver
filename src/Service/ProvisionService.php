@@ -40,6 +40,8 @@ final class ProvisionService
         private readonly ?string $systemPromptOverride = null,
         private readonly string $llmApiKey = '',
         private readonly TimezoneService $timezone = new TimezoneService(),
+        private readonly int $stepIdleTimeout = 120,
+        private readonly int $stepGrace = 15,
     ) {
     }
 
@@ -87,7 +89,14 @@ final class ProvisionService
             'llm_model' => $this->llmModel,
             'system_prompt_override' => $this->systemPromptOverride,
             'max_rounds' => $this->maxRounds,
+            // Two-clock liveness (docs/step-liveness-plan.md §3.8): the worker
+            // gets the same budgets the controller enforces, so it can stop
+            // early and transmit partial results instead of being cut off.
+            // `step_timeout` was issued before this change but never read by
+            // any worker code — it is now the worker's e2e budget too.
             'step_timeout' => $this->stepTimeout,
+            'step_idle_timeout' => $this->stepIdleTimeout,
+            'step_grace' => $this->stepGrace,
             'context' => [
                 'request_size' => $this->contextRequestSize,
                 'output_buffer_size' => $this->contextOutputBuffer,

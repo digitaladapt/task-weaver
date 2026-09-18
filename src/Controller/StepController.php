@@ -9,6 +9,7 @@ use App\Entity\Worker;
 use App\Repository\StepRepository;
 use App\Service\TaskWorkflowService;
 use App\Service\WorkerAuthService;
+use DateTimeImmutable;
 
 use function is_string;
 
@@ -52,6 +53,14 @@ final class StepController extends AbstractController
 
         try {
             if (Step::STATUS_RUNNING === $status) {
+                // A stale step may not be (re)started. markStepRunning() would
+                // reject it anyway (it requires `pending`), but a worker that
+                // re-PATCHes `running` after the deadline deserves the real
+                // reason rather than "status is running, expected pending"
+                // (docs/step-liveness-plan.md §3.7).
+                if ($step->isStale(new DateTimeImmutable())) {
+                    return $this->json(['error' => 'Step has expired'], Response::HTTP_CONFLICT);
+                }
                 $workflow->markStepRunning($step, $worker, '' !== $model ? $model : null);
             } elseif (Step::STATUS_FAILED === $status) {
                 // A worker reporting its own failure (e.g. the LLM is
@@ -68,11 +77,24 @@ final class StepController extends AbstractController
             return $this->json(['error' => $e->getMessage()], Response::HTTP_CONFLICT);
         }
 
-        return $this->json([
+        // Budget block (docs/step-liveness-plan.md §3.3): the worker arms its
+        // two local clocks from these DURATIONS. Durations, not timestamps —
+        // worker and controller are separate containers, so "you have N
+        // seconds left" survives clock skew where an absolute deadline would
+        // not. `e2e_remaining` is derived from the stamped deadline, so it
+        // already absorbs any delay between stamping and this response.
+        $response = [
             'ok' => true,
             'step_id' => $step->getId()->toRfc4122(),
             'status' => $step->getStatus(),
             'expires_at' => $step->getExpiresAt()?->format('c'),
-        ]);
+            'idle_expires_at' => $step->getIdleExpiresAt()?->format('c'),
+        ];
+
+        if (Step::STATUS_RUNNING === $step->getStatus()) {
+            $response['budget'] = $workflow->budgetFor($step);
+        }
+
+        return $this->json($response);
     }
 }

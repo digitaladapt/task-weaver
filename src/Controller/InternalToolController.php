@@ -9,6 +9,7 @@ use App\Entity\Worker;
 use App\Repository\EventRepository;
 use App\Service\ToolProxyService;
 use App\Service\WorkerAuthService;
+use DateTimeImmutable;
 
 use function is_array;
 use function is_string;
@@ -55,6 +56,15 @@ final class InternalToolController extends AbstractController
         // Deleted tasks are frozen; no new event activity is accepted.
         if ($event->getTask()->isDeleted()) {
             return $this->json(['error' => 'Task is deleted'], Response::HTTP_NOT_FOUND);
+        }
+
+        // The event key must still be valid: step running and within BOTH
+        // deadlines (docs/step-liveness-plan.md §3.6). This route
+        // authenticates with the Tier-1 worker key, so it needs the check
+        // explicitly — otherwise a zombie worker could keep logging internal
+        // activity for a step the controller has already declared stale.
+        if (!$event->hasValidKey(new DateTimeImmutable())) {
+            return $this->json(['error' => 'Event key expired'], Response::HTTP_UNAUTHORIZED);
         }
 
         $details = is_array($payload['details'] ?? null) ? $payload['details'] : [];

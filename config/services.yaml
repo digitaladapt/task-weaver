@@ -9,6 +9,14 @@ parameters:
     # symfony/dotenv is dev-only; production injects real env vars.
     env(TASKWEAVER_MAX_ROUNDS): '50'
     env(TASKWEAVER_STEP_TIMEOUT): '600'
+    # Two-clock step liveness (docs/step-liveness-plan.md §3.8):
+    #   IDLE_TIMEOUT — max seconds of silence between activity before the
+    #                  step's rolling deadline trips.
+    #   GRACE        — head start the worker takes: it aborts at
+    #                  deadline − grace so it can still transmit partial
+    #                  results instead of being cut off by the controller.
+    env(TASKWEAVER_STEP_IDLE_TIMEOUT): '120'
+    env(TASKWEAVER_STEP_GRACE): '15'
     env(TASKWEAVER_CONTEXT_REQUEST_SIZE): '6000'
     env(TASKWEAVER_CONTEXT_OUTPUT_BUFFER): '1500'
     env(TASKWEAVER_LLM_MAX_CONCURRENCY): '1'
@@ -104,6 +112,8 @@ services:
             $enrollmentToken: '%env(TASKWEAVER_ENROLLMENT_TOKEN)%'
             $maxRounds: '%env(int:TASKWEAVER_MAX_ROUNDS)%'
             $stepTimeout: '%env(int:TASKWEAVER_STEP_TIMEOUT)%'
+            $stepIdleTimeout: '%env(int:TASKWEAVER_STEP_IDLE_TIMEOUT)%'
+            $stepGrace: '%env(int:TASKWEAVER_STEP_GRACE)%'
             $contextRequestSize: '%env(int:TASKWEAVER_CONTEXT_REQUEST_SIZE)%'
             $contextOutputBuffer: '%env(int:TASKWEAVER_CONTEXT_OUTPUT_BUFFER)%'
             $llmMaxConcurrency: '%env(int:TASKWEAVER_LLM_MAX_CONCURRENCY)%'
@@ -118,10 +128,12 @@ services:
             # We pass the raw key string; ProvisionService decides.
             $llmApiKey: '%llm_api_key%'
 
-    # Step timeout for the workflow service.
+    # Step liveness for the workflow service (both clocks + worker grace).
     App\Service\TaskWorkflowService:
         arguments:
             $stepTimeout: '%env(int:TASKWEAVER_STEP_TIMEOUT)%'
+            $idleTimeout: '%env(int:TASKWEAVER_STEP_IDLE_TIMEOUT)%'
+            $grace: '%env(int:TASKWEAVER_STEP_GRACE)%'
 
     # Deployment-wide timezone (empty → system default).
     App\Service\TimezoneService:
